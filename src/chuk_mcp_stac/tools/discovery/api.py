@@ -9,8 +9,10 @@ from chuk_mcp_server import has_artifact_store
 
 from ...constants import (
     DEFAULT_CATALOG,
+    DEM_BANDS,
     INDEX_BANDS,
     LANDSAT_BANDS,
+    SENTINEL1_BANDS,
     SENTINEL2_BANDS,
     EnvVar,
     SatelliteCollection,
@@ -24,6 +26,7 @@ from ...models import (
     ErrorResponse,
     SpectralIndexInfo,
     StatusResponse,
+    format_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,12 +42,17 @@ def register_discovery_tools(mcp: object, manager: object) -> None:
     """
 
     @mcp.tool  # type: ignore[union-attr]
-    async def stac_status() -> str:
+    async def stac_status(
+        output_mode: str = "json",
+    ) -> str:
         """
         Get server status and configuration.
 
         Returns information about the server version, available catalogs,
         and artifact store status.
+
+        Args:
+            output_mode: Response format - "json" (default) or "text"
 
         Returns:
             JSON with server status
@@ -54,24 +62,32 @@ def register_discovery_tools(mcp: object, manager: object) -> None:
         """
         try:
             provider = os.environ.get(EnvVar.ARTIFACTS_PROVIDER, StorageProvider.MEMORY)
-            return StatusResponse(
-                server=ServerConfig.NAME,
-                version=ServerConfig.VERSION,
-                storage_provider=provider,
-                default_catalog=DEFAULT_CATALOG,
-                artifact_store_available=has_artifact_store(),
-            ).model_dump_json()
+            return format_response(
+                StatusResponse(
+                    server=ServerConfig.NAME,
+                    version=ServerConfig.VERSION,
+                    storage_provider=provider,
+                    default_catalog=DEFAULT_CATALOG,
+                    artifact_store_available=has_artifact_store(),
+                ),
+                output_mode,
+            )
         except Exception as e:
             logger.error(f"Failed to get status: {e}")
-            return ErrorResponse(error=str(e)).model_dump_json()
+            return format_response(ErrorResponse(error=str(e)), output_mode)
 
     @mcp.tool  # type: ignore[union-attr]
-    async def stac_capabilities() -> str:
+    async def stac_capabilities(
+        output_mode: str = "json",
+    ) -> str:
         """
         List server capabilities: catalogs, collections, and band info.
 
         Returns a comprehensive overview of what this server can do,
         useful for LLM planning of analysis workflows.
+
+        Args:
+            output_mode: Response format - "json" (default) or "text"
 
         Returns:
             JSON with full capability listing
@@ -86,16 +102,21 @@ def register_discovery_tools(mcp: object, manager: object) -> None:
             for name, bands in INDEX_BANDS.items()
         ]
 
-        return CapabilitiesResponse(
-            server=ServerConfig.NAME,
-            version=ServerConfig.VERSION,
-            catalogs=catalogs,
-            default_catalog=DEFAULT_CATALOG,
-            known_collections=SatelliteCollection.ALL,
-            spectral_indices=indices,
-            tool_count=len(mcp.get_tools()),  # type: ignore[union-attr]
-            band_mappings={
-                "sentinel-2": list(SENTINEL2_BANDS.keys()),
-                "landsat": list(LANDSAT_BANDS.keys()),
-            },
-        ).model_dump_json()
+        return format_response(
+            CapabilitiesResponse(
+                server=ServerConfig.NAME,
+                version=ServerConfig.VERSION,
+                catalogs=catalogs,
+                default_catalog=DEFAULT_CATALOG,
+                known_collections=SatelliteCollection.ALL,
+                spectral_indices=indices,
+                tool_count=len(mcp.get_tools()),  # type: ignore[union-attr]
+                band_mappings={
+                    "sentinel-2": list(SENTINEL2_BANDS.keys()),
+                    "landsat": list(LANDSAT_BANDS.keys()),
+                    "sentinel-1": list(SENTINEL1_BANDS.keys()),
+                    "dem": list(DEM_BANDS.keys()),
+                },
+            ),
+            output_mode,
+        )

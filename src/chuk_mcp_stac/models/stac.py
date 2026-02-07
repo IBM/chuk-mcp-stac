@@ -34,6 +34,9 @@ class STACProperties(BaseModel):
     proj_epsg: int | None = Field(None, alias="proj:epsg")
     proj_code: str | None = Field(None, alias="proj:code")
     gsd: float | None = None
+    sun_elevation: float | None = Field(None, alias="view:sun_elevation")
+    sun_azimuth: float | None = Field(None, alias="view:sun_azimuth")
+    view_off_nadir: float | None = Field(None, alias="view:off_nadir")
 
 
 class STACItem(BaseModel):

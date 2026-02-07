@@ -561,6 +561,7 @@ dependencies = [
     { name = "chuk-mcp-server" },
     { name = "mcp" },
     { name = "numpy" },
+    { name = "pillow" },
     { name = "pydantic" },
     { name = "pyproj" },
     { name = "pystac-client" },
@@ -584,6 +585,9 @@ dev = [
     { name = "pytest-mock" },
     { name = "ruff" },
 ]
+pc = [
+    { name = "planetary-computer" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -596,6 +600,8 @@ requires-dist = [
     { name = "mcp", specifier = ">=0.9.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "numpy", specifier = ">=1.24.0" },
+    { name = "pillow", specifier = ">=9.0.0" },
+    { name = "planetary-computer", marker = "extra == 'pc'", specifier = ">=1.0.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pyproj", specifier = ">=3.6.0" },
@@ -609,7 +615,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "tenacity", specifier = ">=8.2.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["pc", "dev"]
 
 [[package]]
 name = "chuk-sessions"
@@ -2107,6 +2113,25 @@ wheels = [
 ]
 
 [[package]]
+name = "planetary-computer"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "packaging" },
+    { name = "pydantic" },
+    { name = "pystac" },
+    { name = "pystac-client" },
+    { name = "python-dotenv" },
+    { name = "pytz" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9b/d3/ccfb0e823e9beb72b7e6b749f0985c4db1530d4e4a145b1b5d12f5de417e/planetary-computer-1.0.0.tar.gz", hash = "sha256:5958a8e1d8ba1aafc7ac45878df2d7d03405806ae31ed2e675333faebca960cc", size = 17076, upload-time = "2023-07-05T13:06:58.679Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4f/7a/3965a2b58d172e106c1064af19707d29f86a0142c28ff40185490a0a8cfe/planetary_computer-1.0.0-py3-none-any.whl", hash = "sha256:7af5839f9346c1d23d53fff4e80e955db18a2d81992877816e22dcbc2f90c40d", size = 14163, upload-time = "2023-07-05T13:06:57.06Z" },
+]
+
+[[package]]
 name = "platformdirs"
 version = "4.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2647,6 +2672,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/52/a0/07907b6ff512674d9b201859f7d212298c44933633c946703a20c25e9d81/pytokens-0.4.1-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:967cf6e3fd4adf7de8fc73cd3043754ae79c36475c1c11d514fc72cf5490094a", size = 306698, upload-time = "2026-01-30T01:03:29.653Z" },
     { url = "https://files.pythonhosted.org/packages/39/2a/cbbf9250020a4a8dd53ba83a46c097b69e5eb49dd14e708f496f548c6612/pytokens-0.4.1-cp314-cp314t-win_amd64.whl", hash = "sha256:584c80c24b078eec1e227079d56dc22ff755e0ba8654d8383b2c549107528918", size = 116287, upload-time = "2026-01-30T01:03:30.912Z" },
     { url = "https://files.pythonhosted.org/packages/c6/78/397db326746f0a342855b81216ae1f0a32965deccfd7c830a2dbc66d2483/pytokens-0.4.1-py3-none-any.whl", hash = "sha256:26cef14744a8385f35d0e095dc8b3a7583f6c953c2e3d269c7f82484bf5ad2de", size = 13729, upload-time = "2026-01-30T01:03:45.029Z" },
+]
+
+[[package]]
+name = "pytz"
+version = "2025.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/bf/abbd3cdfb8fbc7fb3d4d38d320f2441b1e7cbe29be4f23797b4a2b5d8aac/pytz-2025.2.tar.gz", hash = "sha256:360b9e3dbb49a209c21ad61809c7fb453643e048b38924c765813546746e81c3", size = 320884, upload-time = "2025-03-25T02:25:00.538Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/81/c4/34e93fe5f5429d7570ec1fa436f1986fb1f00c3e0f43a589fe2bbcd22c3f/pytz-2025.2-py2.py3-none-any.whl", hash = "sha256:5ddf76296dd8c44c26eb8f4b6f35488f3ccbf6fbbd7adee0b7262d43f0ec2f00", size = 509225, upload-time = "2025-03-25T02:24:58.468Z" },
 ]
 
 [[package]]

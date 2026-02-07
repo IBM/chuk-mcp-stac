@@ -6,7 +6,7 @@ Pull Sentinel-2 imagery of Colchester using the MCP tools directly,
 download RGB and NIR bands, render true-colour and NDVI images.
 
 Demonstrates the full STAC pipeline via MCP tool calls:
-    stac_search -> stac_download_rgb -> stac_download_bands -> NDVI
+    stac_search -> stac_download_rgb -> stac_compute_index (NDVI)
 
 Each tool returns JSON with artifact references and metadata.
 
@@ -59,14 +59,6 @@ def normalize_rgb(rgb_stack: np.ndarray) -> np.ndarray:
         band = (band - p2) / (p98 - p2 + 1e-10)
         rgb[i] = band
     return np.transpose(rgb, (1, 2, 0))
-
-
-def compute_ndvi(red: np.ndarray, nir: np.ndarray) -> np.ndarray:
-    """Compute NDVI = (NIR - RED) / (NIR + RED)."""
-    red_f = red.astype(np.float32)
-    nir_f = nir.astype(np.float32)
-    denom = nir_f + red_f
-    return np.where(denom > 0, (nir_f - red_f) / denom, 0.0)
 
 
 def render_combined(
@@ -183,6 +175,8 @@ async def main() -> None:
         sys.exit(1)
     print(f"  Artifact: {rgb_result['artifact_ref']}")
     print(f"  Shape: {rgb_result['shape']}  CRS: {rgb_result['crs']}")
+    if rgb_result.get("preview_ref"):
+        print(f"  Preview: {rgb_result['preview_ref']}")
 
     # Retrieve raster bytes from artifact store and read with rasterio
     store = runner.manager._get_store()
@@ -191,30 +185,28 @@ async def main() -> None:
         rgb_stack = src.read()
     print(f"  Array shape: {rgb_stack.shape}")
 
-    # Step 4: Download RED + NIR for NDVI
-    # Equivalent MCP call: stac_download_bands(scene_id=..., bands=["red", "nir"], bbox=BBOX)
-    print("\nStep 4: Downloading RED + NIR bands...")
+    # Step 4: Compute NDVI via stac_compute_index
+    # Equivalent MCP call: stac_compute_index(scene_id=..., index_name="ndvi", bbox=BBOX)
+    print("\nStep 4: Computing NDVI (auto-downloads red + nir bands)...")
     ndvi_result = await runner.run(
-        "stac_download_bands", scene_id=scene_id, bands=["red", "nir"], bbox=BBOX
+        "stac_compute_index", scene_id=scene_id, index_name="ndvi", bbox=BBOX
     )
     if "error" in ndvi_result:
         print(f"  ERROR: {ndvi_result['error']}")
         sys.exit(1)
+    print(f"  Artifact: {ndvi_result['artifact_ref']}")
+    print(f"  Value range: {ndvi_result['value_range']}")
+    if ndvi_result.get("preview_ref"):
+        print(f"  Preview: {ndvi_result['preview_ref']}")
     ndvi_data = await store.retrieve(ndvi_result["artifact_ref"])
     with rasterio.open(io.BytesIO(ndvi_data)) as src:
-        ndvi_stack = src.read()
-
-    # Step 5: Compute NDVI
-    print("\nStep 5: Computing NDVI...")
-    red_band = ndvi_stack[0]
-    nir_band = ndvi_stack[1]
-    ndvi = compute_ndvi(red_band, nir_band)
+        ndvi = src.read(1)  # Single-band float32
     ndvi_mean = np.nanmean(ndvi)
     ndvi_min, ndvi_max = np.nanmin(ndvi), np.nanmax(ndvi)
     print(f"  NDVI range: [{ndvi_min:.3f}, {ndvi_max:.3f}]  mean: {ndvi_mean:.3f}")
 
-    # Step 6: Render outputs
-    print("\nStep 6: Rendering outputs...")
+    # Step 5: Render outputs
+    print("\nStep 5: Rendering outputs...")
     render_rgb(rgb_stack, OUTPUT_DIR / "colchester_rgb.png")
     render_ndvi(ndvi, OUTPUT_DIR / "colchester_ndvi.png")
     render_combined(rgb_stack, ndvi, scene_id, cloud_cover, OUTPUT_DIR / "colchester_combined.png")

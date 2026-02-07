@@ -61,9 +61,10 @@ class ToolRunner:
     """
     Run chuk-mcp-stac MCP tools directly from Python.
 
-    All 11 tools are registered and callable via run(tool_name, **kwargs).
-    Returns parsed JSON (dict/list), not raw strings.
-    An in-memory artifact store is initialized automatically.
+    All 16 tools are registered and callable via run(tool_name, **kwargs).
+    Returns parsed JSON (dict/list) by default. Use run_text() for
+    human-readable output. An in-memory artifact store is initialized
+    automatically.
     """
 
     def __init__(self) -> None:
@@ -83,6 +84,11 @@ class ToolRunner:
         fn = self._mcp.get_tool(tool_name)
         raw = await fn(**kwargs)
         return json.loads(raw)
+
+    async def run_text(self, tool_name: str, **kwargs: Any) -> str:
+        """Call a tool by name with output_mode='text' and return plaintext."""
+        fn = self._mcp.get_tool(tool_name)
+        return await fn(output_mode="text", **kwargs)
 
     async def run_raw(self, tool_name: str, **kwargs: Any) -> str:
         """Call a tool by name and return the raw JSON string."""

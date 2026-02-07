@@ -54,10 +54,12 @@ class STACEndpoints:
 
     EARTH_SEARCH = "https://earth-search.aws.element84.com/v1"
     PLANETARY_COMPUTER = "https://planetarycomputer.microsoft.com/api/stac/v1"
+    USGS = "https://landsatlook.usgs.gov/stac-server"
 
     ALL: dict[str, str] = {
         "earth_search": EARTH_SEARCH,
         "planetary_computer": PLANETARY_COMPUTER,
+        "usgs": USGS,
     }
 
 
@@ -70,8 +72,16 @@ class SatelliteCollection:
     SENTINEL_2_L2A = "sentinel-2-l2a"
     SENTINEL_2_C1_L2A = "sentinel-2-c1-l2a"
     LANDSAT_C2_L2 = "landsat-c2-l2"
+    SENTINEL_1_GRD = "sentinel-1-grd"
+    COP_DEM_GLO_30 = "cop-dem-glo-30"
 
-    ALL: list[str] = [SENTINEL_2_L2A, SENTINEL_2_C1_L2A, LANDSAT_C2_L2]
+    ALL: list[str] = [
+        SENTINEL_2_L2A,
+        SENTINEL_2_C1_L2A,
+        LANDSAT_C2_L2,
+        SENTINEL_1_GRD,
+        COP_DEM_GLO_30,
+    ]
 
 
 # ─── Band Mappings ──────────────────────────────────────────────────────────────
@@ -112,6 +122,17 @@ LANDSAT_BANDS: dict[str, str] = {
     "qa_radsat": "qa_radsat",  # Radiometric saturation QA
 }
 
+# Sentinel-1 GRD SAR band name -> STAC asset key mapping
+SENTINEL1_BANDS: dict[str, str] = {
+    "vv": "vv",  # Co-polarisation
+    "vh": "vh",  # Cross-polarisation
+}
+
+# Copernicus DEM GLO-30 band name -> STAC asset key mapping
+DEM_BANDS: dict[str, str] = {
+    "data": "data",  # Elevation values in metres
+}
+
 # Common spectral index band requirements
 INDEX_BANDS: dict[str, list[str]] = {
     "ndvi": ["red", "nir"],
@@ -120,6 +141,197 @@ INDEX_BANDS: dict[str, list[str]] = {
     "evi": ["blue", "red", "nir"],
     "savi": ["red", "nir"],
     "bsi": ["blue", "red", "nir", "swir16"],
+}
+
+# Hardware band name → common name aliases
+# Allows users to pass e.g. "B04" or "SR_B4" instead of "red"
+BAND_ALIASES: dict[str, str] = {
+    # Sentinel-2 MSI hardware designations
+    "B01": "coastal",
+    "B02": "blue",
+    "B03": "green",
+    "B04": "red",
+    "B05": "rededge1",
+    "B06": "rededge2",
+    "B07": "rededge3",
+    "B08": "nir",
+    "B8A": "nir08",
+    "B09": "nir09",
+    "B11": "swir16",
+    "B12": "swir22",
+    # Landsat Collection 2 Surface Reflectance designations
+    "SR_B1": "coastal",
+    "SR_B2": "blue",
+    "SR_B3": "green",
+    "SR_B4": "red",
+    "SR_B5": "nir08",
+    "SR_B6": "swir16",
+    "SR_B7": "swir22",
+}
+
+
+def resolve_band_name(name: str) -> str:
+    """Resolve a hardware band alias to its common name, or return as-is."""
+    return BAND_ALIASES.get(name, name)
+
+
+# ─── Collection Intelligence ─────────────────────────────────────────────────
+# Static metadata keyed by collection ID, merged with live STAC data at runtime.
+
+COLLECTION_INTELLIGENCE: dict[str, dict] = {
+    "sentinel-2-l2a": {
+        "platform": "Sentinel-2",
+        "instrument": "MSI",
+        "bands": {
+            "coastal": {"wavelength_nm": 443, "resolution_m": 60},
+            "blue": {"wavelength_nm": 490, "resolution_m": 10},
+            "green": {"wavelength_nm": 560, "resolution_m": 10},
+            "red": {"wavelength_nm": 665, "resolution_m": 10},
+            "rededge1": {"wavelength_nm": 705, "resolution_m": 20},
+            "rededge2": {"wavelength_nm": 740, "resolution_m": 20},
+            "rededge3": {"wavelength_nm": 783, "resolution_m": 20},
+            "nir": {"wavelength_nm": 842, "resolution_m": 10},
+            "nir08": {"wavelength_nm": 865, "resolution_m": 20},
+            "nir09": {"wavelength_nm": 945, "resolution_m": 60},
+            "swir16": {"wavelength_nm": 1610, "resolution_m": 20},
+            "swir22": {"wavelength_nm": 2190, "resolution_m": 20},
+        },
+        "composites": {
+            "true_color": {"bands": ["red", "green", "blue"], "description": "Natural colour RGB"},
+            "false_color_ir": {
+                "bands": ["nir", "red", "green"],
+                "description": "Vegetation in red",
+            },
+            "agriculture": {"bands": ["swir16", "nir", "blue"], "description": "Crop health"},
+            "urban": {"bands": ["swir22", "swir16", "red"], "description": "Urban areas"},
+        },
+        "cloud_mask_band": "scl",
+        "llm_guidance": (
+            "Sentinel-2 L2A provides surface reflectance at 10-60m resolution. "
+            "Use 'red', 'green', 'blue' for RGB. NIR band is 'nir' (10m). "
+            "Cloud masking via SCL band. Best for vegetation, water, and land cover analysis."
+        ),
+    },
+    "sentinel-2-c1-l2a": {
+        "platform": "Sentinel-2",
+        "instrument": "MSI",
+        "bands": {
+            "coastal": {"wavelength_nm": 443, "resolution_m": 60},
+            "blue": {"wavelength_nm": 490, "resolution_m": 10},
+            "green": {"wavelength_nm": 560, "resolution_m": 10},
+            "red": {"wavelength_nm": 665, "resolution_m": 10},
+            "rededge1": {"wavelength_nm": 705, "resolution_m": 20},
+            "rededge2": {"wavelength_nm": 740, "resolution_m": 20},
+            "rededge3": {"wavelength_nm": 783, "resolution_m": 20},
+            "nir": {"wavelength_nm": 842, "resolution_m": 10},
+            "nir08": {"wavelength_nm": 865, "resolution_m": 20},
+            "nir09": {"wavelength_nm": 945, "resolution_m": 60},
+            "swir16": {"wavelength_nm": 1610, "resolution_m": 20},
+            "swir22": {"wavelength_nm": 2190, "resolution_m": 20},
+        },
+        "composites": {
+            "true_color": {"bands": ["red", "green", "blue"], "description": "Natural colour RGB"},
+            "false_color_ir": {
+                "bands": ["nir", "red", "green"],
+                "description": "Vegetation in red",
+            },
+        },
+        "cloud_mask_band": "scl",
+        "llm_guidance": (
+            "Sentinel-2 Collection 1 L2A (harmonized). Same bands as sentinel-2-l2a "
+            "but with improved radiometric consistency across the archive."
+        ),
+    },
+    "landsat-c2-l2": {
+        "platform": "Landsat 8/9",
+        "instrument": "OLI/TIRS",
+        "bands": {
+            "coastal": {"wavelength_nm": 443, "resolution_m": 30},
+            "blue": {"wavelength_nm": 482, "resolution_m": 30},
+            "green": {"wavelength_nm": 562, "resolution_m": 30},
+            "red": {"wavelength_nm": 655, "resolution_m": 30},
+            "nir08": {"wavelength_nm": 865, "resolution_m": 30},
+            "swir16": {"wavelength_nm": 1609, "resolution_m": 30},
+            "swir22": {"wavelength_nm": 2201, "resolution_m": 30},
+            "lwir11": {"wavelength_nm": 10895, "resolution_m": 100},
+        },
+        "composites": {
+            "true_color": {"bands": ["red", "green", "blue"], "description": "Natural colour RGB"},
+            "false_color_ir": {
+                "bands": ["nir08", "red", "green"],
+                "description": "Vegetation in red",
+            },
+        },
+        "cloud_mask_band": "qa_pixel",
+        "llm_guidance": (
+            "Landsat Collection 2 Level-2 at 30m resolution. NIR band is 'nir08' (not 'nir'). "
+            "Includes thermal bands (lwir11, lwir12). Use qa_pixel for cloud masking. "
+            "30+ year archive for change detection."
+        ),
+    },
+    "sentinel-1-grd": {
+        "platform": "Sentinel-1",
+        "instrument": "C-SAR",
+        "bands": {
+            "vv": {"wavelength_nm": 56000, "resolution_m": 10},
+            "vh": {"wavelength_nm": 56000, "resolution_m": 10},
+        },
+        "composites": {},
+        "cloud_mask_band": None,
+        "llm_guidance": (
+            "Sentinel-1 GRD provides C-band SAR backscatter at 10m resolution. "
+            "Polarisations: VV (co-pol) and VH (cross-pol). Not affected by clouds. "
+            "Use for flood mapping, ship detection, and structural monitoring. "
+            "No cloud masking needed. No spectral indices available."
+        ),
+    },
+    "cop-dem-glo-30": {
+        "platform": "TanDEM-X",
+        "instrument": "X-SAR",
+        "bands": {
+            "data": {"wavelength_nm": 0, "resolution_m": 30},
+        },
+        "composites": {},
+        "cloud_mask_band": None,
+        "llm_guidance": (
+            "Copernicus GLO-30 DEM provides global elevation data at 30m resolution. "
+            "Single 'data' band contains elevation values in metres. "
+            "Use for terrain analysis, slope, aspect, and hydrological modelling. "
+            "No temporal dimension, no cloud cover, no spectral indices."
+        ),
+    },
+}
+
+# ─── Conformance Classes ─────────────────────────────────────────────────────
+# Maps feature names to known conformance URI patterns for STAC API parsing.
+
+CONFORMANCE_CLASSES: dict[str, list[str]] = {
+    "core": [
+        "https://api.stacspec.org/v1.0.0/core",
+        "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/core",
+    ],
+    "item_search": [
+        "https://api.stacspec.org/v1.0.0/item-search",
+        "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson",
+    ],
+    "filter": [
+        "https://api.stacspec.org/v1.0.0/item-search#filter",
+        "http://www.opengis.net/spec/cql2/1.0/conf/cql2-text",
+        "http://www.opengis.net/spec/cql2/1.0/conf/cql2-json",
+    ],
+    "sort": [
+        "https://api.stacspec.org/v1.0.0/item-search#sort",
+    ],
+    "fields": [
+        "https://api.stacspec.org/v1.0.0/item-search#fields",
+    ],
+    "query": [
+        "https://api.stacspec.org/v1.0.0/item-search#query",
+    ],
+    "collections": [
+        "https://api.stacspec.org/v1.0.0/collections",
+        "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/oas30",
+    ],
 }
 
 
@@ -145,11 +357,15 @@ MAX_BAND_WORKERS: int = 4
 # TTL for cached STAC client connections (seconds)
 CLIENT_CACHE_TTL: int = 300
 
+# In-memory raster cache limits
+RASTER_CACHE_MAX_BYTES: int = 100 * 1024 * 1024  # 100 MB total
+RASTER_CACHE_MAX_ITEM: int = 10 * 1024 * 1024  # 10 MB per item
+
 
 # ─── Type Literals ──────────────────────────────────────────────────────────────
 
 
-CatalogName = Literal["earth_search", "planetary_computer"]
+CatalogName = Literal["earth_search", "planetary_computer", "usgs"]
 CompositeMethod = Literal["median", "mean", "min", "max", "latest"]
 DownloadFormat = Literal["geotiff", "png"]
 
@@ -162,6 +378,9 @@ METADATA_ASSET_KEYS = frozenset({"thumbnail", "info", "metadata", "tilejson"})
 
 THUMBNAIL_KEY = "thumbnail"
 
+# Asset keys checked for scene preview/thumbnail URLs (ordered by preference)
+PREVIEW_ASSET_KEYS: tuple[str, ...] = ("rendered_preview", "thumbnail")
+
 
 # ─── MIME Types ──────────────────────────────────────────────────────────────
 
@@ -170,6 +389,7 @@ class MimeType:
     """MIME type constants for artifact storage."""
 
     GEOTIFF = "image/tiff"
+    PNG = "image/png"
 
 
 # ─── Artifact Types ──────────────────────────────────────────────────────────
@@ -192,6 +412,22 @@ PENDING_SCHEME = "pending://"
 
 RGB_COMPOSITE_TYPE = "rgb"
 DEFAULT_COMPOSITE_NAME = "custom"
+
+
+# ─── Cloud Masking ─────────────────────────────────────────────────────────
+
+
+# Sentinel-2 Scene Classification Layer (SCL) band name
+SCL_BAND_NAME: str = "scl"
+
+# SCL values considered "good" (not cloud/shadow/saturated)
+# 4=vegetation, 5=bare_soil, 6=water, 7=cloud_low_prob, 11=snow
+SCL_GOOD_VALUES: frozenset[int] = frozenset({4, 5, 6, 7, 11})
+
+# Collections that support SCL-based cloud masking
+SCL_COLLECTIONS: frozenset[str] = frozenset(
+    {SatelliteCollection.SENTINEL_2_L2A, SatelliteCollection.SENTINEL_2_C1_L2A}
+)
 
 
 # ─── STAC Property Keys ─────────────────────────────────────────────────────
@@ -233,3 +469,4 @@ class SuccessMessages:
     COMPOSITE_COMPLETE = "Created {} composite from {} band(s)"
     MOSAIC_COMPLETE = "Created mosaic from {} scene(s)"
     TIME_SERIES = "Extracted time series: {} dates"
+    INDEX_COMPLETE = "Computed {} index"

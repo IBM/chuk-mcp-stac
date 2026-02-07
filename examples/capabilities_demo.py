@@ -4,7 +4,7 @@ Capabilities Demo -- chuk-mcp-stac
 
 Quick-start script showing what the server can do, without any network
 access. Lists catalogs, collections, band mappings, spectral indices,
-and server status.
+and server status. Also demonstrates the dual output mode (JSON vs text).
 
 Usage:
     python examples/capabilities_demo.py
@@ -27,7 +27,7 @@ async def main() -> None:
     for name in sorted(runner.tool_names):
         print(f"  - {name}")
 
-    # Server capabilities
+    # Server capabilities (JSON mode -- default)
     caps = await runner.run("stac_capabilities")
     print(f"\nServer: {caps['server']} v{caps['version']}")
 
@@ -57,10 +57,32 @@ async def main() -> None:
     catalogs = await runner.run("stac_list_catalogs")
     print(f"\nstac_list_catalogs: {catalogs['message']}")
 
+    # ---------------------------------------------------------------
+    # Dual output mode: text vs JSON
+    # ---------------------------------------------------------------
+    print("\n" + "-" * 60)
+    print("Dual Output Mode Demo")
+    print("-" * 60)
+
+    # Status in text mode
+    print("\nstac_status (output_mode='text'):")
+    status_text = await runner.run_text("stac_status")
+    print(status_text)
+
+    # Capabilities in text mode
+    print("\nstac_capabilities (output_mode='text'):")
+    caps_text = await runner.run_text("stac_capabilities")
+    print(caps_text)
+
+    # List catalogs in text mode
+    print("\nstac_list_catalogs (output_mode='text'):")
+    cats_text = await runner.run_text("stac_list_catalogs")
+    print(cats_text)
+
     print("\n" + "=" * 60)
     print("All capabilities shown above require no network access.")
-    print("Run other demos (colchester, mosaic, time_series, landsat)")
-    print("to see the full STAC search and download pipeline in action.")
+    print("Run other demos (colchester, mosaic, time_series, landsat,")
+    print("collection_intel) to see the full pipeline in action.")
     print("=" * 60)
 
 

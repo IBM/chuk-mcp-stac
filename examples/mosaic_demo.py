@@ -114,6 +114,8 @@ async def main() -> None:
     print(f"\n  Artifact: {mosaic_result['artifact_ref']}")
     print(f"  CRS: {mosaic_result['crs']}")
     print(f"  Shape: {mosaic_result['shape']}")
+    if mosaic_result.get("preview_ref"):
+        print(f"  Preview: {mosaic_result['preview_ref']}")
 
     # Step 3: Retrieve and render the mosaic
     print("\nRendering mosaic RGB...")

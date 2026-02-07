@@ -61,7 +61,7 @@ class TestStacListCatalogs:
         fn = mcp.get_tool("stac_list_catalogs")
         result = json.loads(await fn())
         assert "catalogs" in result
-        assert len(result["catalogs"]) == 2
+        assert len(result["catalogs"]) == 3
         assert result["default"] == "earth_search"
 
 
@@ -205,6 +205,68 @@ class TestStacSearch:
         assert call_kwargs["max_items"] == 0
 
 
+class TestStacPreview:
+    async def test_scene_not_found(self, search_tools):
+        mcp, _ = search_tools
+        fn = mcp.get_tool("stac_preview")
+        result = json.loads(await fn(scene_id="nonexistent"))
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+
+    async def test_happy_path_thumbnail(self, search_tools):
+        mcp, manager = search_tools
+        item = make_stac_item(
+            extra_assets={
+                "thumbnail": {
+                    "href": "https://example.com/thumb.png",
+                    "type": "image/png",
+                },
+            }
+        )
+        manager.cache_scene(SAMPLE_SCENE_ID, item, "earth_search")
+
+        fn = mcp.get_tool("stac_preview")
+        result = json.loads(await fn(scene_id=SAMPLE_SCENE_ID))
+
+        assert result["preview_url"] == "https://example.com/thumb.png"
+        assert result["asset_key"] == "thumbnail"
+        assert result["media_type"] == "image/png"
+
+    async def test_prefers_rendered_preview(self, search_tools):
+        mcp, manager = search_tools
+        item = make_stac_item(
+            extra_assets={
+                "rendered_preview": {
+                    "href": "https://example.com/rendered.png",
+                    "type": "image/png",
+                },
+                "thumbnail": {
+                    "href": "https://example.com/thumb.png",
+                    "type": "image/png",
+                },
+            }
+        )
+        manager.cache_scene(SAMPLE_SCENE_ID, item, "earth_search")
+
+        fn = mcp.get_tool("stac_preview")
+        result = json.loads(await fn(scene_id=SAMPLE_SCENE_ID))
+
+        assert result["asset_key"] == "rendered_preview"
+        assert result["preview_url"] == "https://example.com/rendered.png"
+
+    async def test_no_preview_available(self, search_tools):
+        mcp, manager = search_tools
+        # Item with no preview assets (only data bands)
+        item = make_stac_item()
+        manager.cache_scene(SAMPLE_SCENE_ID, item, "earth_search")
+
+        fn = mcp.get_tool("stac_preview")
+        result = json.loads(await fn(scene_id=SAMPLE_SCENE_ID))
+
+        assert "error" in result
+        assert "no preview" in result["error"].lower()
+
+
 class TestStacDescribeScene:
     async def test_scene_not_found(self, search_tools):
         mcp, _ = search_tools
@@ -261,3 +323,585 @@ class TestStacDescribeScene:
         fn = mcp.get_tool("stac_describe_scene")
         result = json.loads(await fn(scene_id="no_crs"))
         assert result["crs"] is None
+
+
+class TestStacDescribeCollection:
+    async def test_known_collection(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_describe_collection")
+
+        mock_coll = MagicMock()
+        mock_coll.title = "Sentinel-2 L2A"
+        mock_coll.description = "Surface reflectance"
+        mock_coll.extent = MagicMock()
+        mock_coll.extent.spatial = MagicMock()
+        mock_coll.extent.spatial.bboxes = [[-180, -90, 180, 90]]
+        mock_coll.extent.temporal = MagicMock()
+        mock_coll.extent.temporal.intervals = [[None, None]]
+
+        mock_client = MagicMock()
+        mock_client.get_collection.return_value = mock_coll
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(await fn(collection_id="sentinel-2-l2a"))
+
+        assert result["collection_id"] == "sentinel-2-l2a"
+        assert result["platform"] == "Sentinel-2"
+        assert len(result["bands"]) > 0
+        assert len(result["composites"]) > 0
+        assert result["cloud_mask_band"] == "scl"
+        assert result["llm_guidance"] is not None
+
+    async def test_unknown_collection(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_describe_collection")
+
+        mock_coll = MagicMock()
+        mock_coll.title = "Custom Collection"
+        mock_coll.description = "Some custom data"
+        mock_coll.extent = None
+
+        mock_client = MagicMock()
+        mock_client.get_collection.return_value = mock_coll
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(await fn(collection_id="custom-unknown"))
+
+        assert result["collection_id"] == "custom-unknown"
+        assert result["bands"] == []
+        assert result["composites"] == []
+        assert result["platform"] is None
+
+    async def test_spectral_indices_detected(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_describe_collection")
+
+        mock_coll = MagicMock()
+        mock_coll.title = "Sentinel-2"
+        mock_coll.description = None
+        mock_coll.extent = None
+
+        mock_client = MagicMock()
+        mock_client.get_collection.return_value = mock_coll
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(await fn(collection_id="sentinel-2-l2a"))
+
+        # Sentinel-2 has nir, red, green, blue, swir16 → supports ndvi, ndwi, ndbi, evi, savi, bsi
+        assert "ndvi" in result["spectral_indices"]
+        assert "ndwi" in result["spectral_indices"]
+
+    async def test_catalog_error(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_describe_collection")
+
+        with patch.object(manager, "get_stac_client", side_effect=Exception("timeout")):
+            result = json.loads(await fn(collection_id="sentinel-2-l2a"))
+
+        assert "error" in result
+
+
+class TestStacGetConformance:
+    async def test_happy_path(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_get_conformance")
+
+        mock_client = MagicMock()
+        mock_client.conformance = [
+            "https://api.stacspec.org/v1.0.0/core",
+            "https://api.stacspec.org/v1.0.0/item-search",
+            "https://api.stacspec.org/v1.0.0/item-search#filter",
+        ]
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(await fn())
+
+        assert result["conformance_available"] is True
+        features = {f["name"]: f["supported"] for f in result["features"]}
+        assert features["core"] is True
+        assert features["item_search"] is True
+        assert features["filter"] is True
+        assert len(result["raw_uris"]) == 3
+
+    async def test_no_conformance(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_get_conformance")
+
+        mock_client = MagicMock()
+        mock_client.conformance = None
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(await fn())
+
+        assert result["conformance_available"] is False
+
+    async def test_empty_conformance(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_get_conformance")
+
+        mock_client = MagicMock()
+        mock_client.conformance = []
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(await fn())
+
+        assert result["conformance_available"] is False
+
+    async def test_catalog_error(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_get_conformance")
+
+        with patch.object(manager, "get_stac_client", side_effect=Exception("refused")):
+            result = json.loads(await fn())
+
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Feature 5: output_mode tests for search tools
+# ---------------------------------------------------------------------------
+
+
+class TestOutputModeSearch:
+    async def test_list_catalogs_text(self, search_tools):
+        mcp, _ = search_tools
+        fn = mcp.get_tool("stac_list_catalogs")
+        result = await fn(output_mode="text")
+        assert "catalog(s) available" in result
+        # Should NOT be JSON
+        assert not result.startswith("{")
+
+    async def test_list_catalogs_json_default(self, search_tools):
+        mcp, _ = search_tools
+        fn = mcp.get_tool("stac_list_catalogs")
+        result = await fn()
+        parsed = json.loads(result)
+        assert "catalogs" in parsed
+
+    async def test_search_text(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_search")
+
+        mock_search = MagicMock()
+        mock_search.items.return_value = []
+        mock_client = MagicMock()
+        mock_client.search.return_value = mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = await fn(bbox=SAMPLE_BBOX, output_mode="text")
+
+        assert "Found 0 scene(s)" in result
+        assert not result.startswith("{")
+
+    async def test_search_error_text(self, search_tools):
+        mcp, _ = search_tools
+        fn = mcp.get_tool("stac_search")
+        result = await fn(bbox=[1, 2], output_mode="text")
+        assert result.startswith("Error:")
+
+    async def test_describe_collection_text(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_describe_collection")
+
+        mock_coll = MagicMock()
+        mock_coll.title = "Sentinel-2"
+        mock_coll.description = "A collection"
+        mock_coll.extent = None
+
+        mock_client = MagicMock()
+        mock_client.get_collection.return_value = mock_coll
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = await fn(collection_id="sentinel-2-l2a", output_mode="text")
+
+        assert "sentinel-2-l2a" in result
+        assert not result.startswith("{")
+
+    async def test_conformance_text(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_get_conformance")
+
+        mock_client = MagicMock()
+        mock_client.conformance = None
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = await fn(output_mode="text")
+
+        assert "does not expose conformance" in result
+
+
+# ---------------------------------------------------------------------------
+# stac_find_pairs tests
+# ---------------------------------------------------------------------------
+
+
+class TestStacFindPairs:
+    async def test_happy_path(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_find_pairs")
+
+        before_item = _make_mock_stac_item(scene_id="BEFORE_1", cloud_cover=3.0)
+        after_item = _make_mock_stac_item(scene_id="AFTER_1", cloud_cover=4.0)
+
+        def _mock_search(**kwargs):
+            dt = kwargs.get("datetime", "")
+            mock_s = MagicMock()
+            if "2024-01" in dt:
+                mock_s.items.return_value = [before_item]
+            else:
+                mock_s.items.return_value = [after_item]
+            return mock_s
+
+        mock_client = MagicMock()
+        mock_client.search.side_effect = _mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(
+                await fn(
+                    bbox=SAMPLE_BBOX,
+                    before_range="2024-01-01/2024-03-31",
+                    after_range="2024-07-01/2024-09-30",
+                )
+            )
+
+        assert result["pair_count"] >= 1
+        assert result["pairs"][0]["before_scene_id"] == "BEFORE_1"
+        assert result["pairs"][0]["after_scene_id"] == "AFTER_1"
+        assert result["pairs"][0]["overlap_percent"] > 0
+
+    async def test_no_overlap(self, search_tools):
+        """Scenes with non-overlapping bboxes produce no pairs."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_find_pairs")
+
+        before_item = _make_mock_stac_item(scene_id="B1")
+        before_item.bbox = [0, 0, 1, 1]
+        before_item.to_dict.return_value["bbox"] = [0, 0, 1, 1]
+
+        after_item = _make_mock_stac_item(scene_id="A1")
+        after_item.bbox = [10, 10, 11, 11]
+        after_item.to_dict.return_value["bbox"] = [10, 10, 11, 11]
+
+        def _mock_search(**kwargs):
+            dt = kwargs.get("datetime", "")
+            mock_s = MagicMock()
+            if "2024-01" in dt:
+                mock_s.items.return_value = [before_item]
+            else:
+                mock_s.items.return_value = [after_item]
+            return mock_s
+
+        mock_client = MagicMock()
+        mock_client.search.side_effect = _mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(
+                await fn(
+                    bbox=SAMPLE_BBOX,
+                    before_range="2024-01-01/2024-03-31",
+                    after_range="2024-07-01/2024-09-30",
+                )
+            )
+
+        assert result["pair_count"] == 0
+
+    async def test_caches_scenes(self, search_tools):
+        """All found scenes should be cached for later download."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_find_pairs")
+
+        before_item = _make_mock_stac_item(scene_id="CACHED_B")
+        after_item = _make_mock_stac_item(scene_id="CACHED_A")
+
+        def _mock_search(**kwargs):
+            dt = kwargs.get("datetime", "")
+            mock_s = MagicMock()
+            if "2024-01" in dt:
+                mock_s.items.return_value = [before_item]
+            else:
+                mock_s.items.return_value = [after_item]
+            return mock_s
+
+        mock_client = MagicMock()
+        mock_client.search.side_effect = _mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            await fn(
+                bbox=SAMPLE_BBOX,
+                before_range="2024-01-01/2024-03-31",
+                after_range="2024-07-01/2024-09-30",
+            )
+
+        assert manager.get_cached_scene("CACHED_B") is not None
+        assert manager.get_cached_scene("CACHED_A") is not None
+
+    async def test_error_handling(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_find_pairs")
+
+        with patch.object(manager, "get_stac_client", side_effect=Exception("network error")):
+            result = json.loads(
+                await fn(
+                    bbox=SAMPLE_BBOX,
+                    before_range="2024-01-01/2024-03-31",
+                    after_range="2024-07-01/2024-09-30",
+                )
+            )
+
+        assert "error" in result
+
+    async def test_text_output(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_find_pairs")
+
+        before_item = _make_mock_stac_item(scene_id="TB")
+        after_item = _make_mock_stac_item(scene_id="TA")
+
+        def _mock_search(**kwargs):
+            dt = kwargs.get("datetime", "")
+            mock_s = MagicMock()
+            if "2024-01" in dt:
+                mock_s.items.return_value = [before_item]
+            else:
+                mock_s.items.return_value = [after_item]
+            return mock_s
+
+        mock_client = MagicMock()
+        mock_client.search.side_effect = _mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = await fn(
+                bbox=SAMPLE_BBOX,
+                before_range="2024-01-01/2024-03-31",
+                after_range="2024-07-01/2024-09-30",
+                output_mode="text",
+            )
+
+        assert "scene pair(s)" in result
+        assert not result.startswith("{")
+
+
+# ---------------------------------------------------------------------------
+# stac_coverage_check tests
+# ---------------------------------------------------------------------------
+
+
+class TestStacCoverageCheck:
+    async def test_full_coverage(self, search_tools):
+        """Scene bbox that fully contains target bbox → 100% coverage."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_coverage_check")
+
+        # Scene bbox is larger than target
+        item = make_stac_item(scene_id="big_scene")
+        item = item.model_copy(update={"bbox": [0.0, 51.0, 2.0, 53.0]})
+        manager.cache_scene("big_scene", item, "es")
+
+        result = json.loads(
+            await fn(
+                bbox=[0.5, 51.5, 1.5, 52.5],
+                scene_ids=["big_scene"],
+            )
+        )
+
+        assert result["fully_covered"] is True
+        assert result["coverage_percent"] == 100.0
+
+    async def test_partial_coverage(self, search_tools):
+        """Scene bbox that partially covers target → < 100%."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_coverage_check")
+
+        # Scene only covers left half of target
+        item = make_stac_item(scene_id="half_scene")
+        item = item.model_copy(update={"bbox": [0.0, 51.0, 0.5, 53.0]})
+        manager.cache_scene("half_scene", item, "es")
+
+        result = json.loads(
+            await fn(
+                bbox=[0.0, 51.0, 1.0, 53.0],
+                scene_ids=["half_scene"],
+            )
+        )
+
+        assert result["fully_covered"] is False
+        assert 0 < result["coverage_percent"] < 100
+
+    async def test_no_coverage(self, search_tools):
+        """Scene bbox that doesn't overlap target → 0%."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_coverage_check")
+
+        item = make_stac_item(scene_id="far_scene")
+        item = item.model_copy(update={"bbox": [10.0, 60.0, 11.0, 61.0]})
+        manager.cache_scene("far_scene", item, "es")
+
+        result = json.loads(
+            await fn(
+                bbox=[0.0, 51.0, 1.0, 52.0],
+                scene_ids=["far_scene"],
+            )
+        )
+
+        assert result["coverage_percent"] == 0.0
+        assert result["fully_covered"] is False
+
+    async def test_unknown_scene_skipped(self, search_tools):
+        """Uncached scene IDs should be silently skipped."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_coverage_check")
+
+        result = json.loads(
+            await fn(
+                bbox=SAMPLE_BBOX,
+                scene_ids=["nonexistent"],
+            )
+        )
+
+        assert result["scene_count"] == 0
+        assert result["coverage_percent"] == 0.0
+
+    async def test_invalid_bbox(self, search_tools):
+        mcp, _ = search_tools
+        fn = mcp.get_tool("stac_coverage_check")
+        result = json.loads(await fn(bbox=[1, 2], scene_ids=["x"]))
+        assert "error" in result
+
+    async def test_text_output(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_coverage_check")
+
+        item = make_stac_item(scene_id="txt_scene")
+        item = item.model_copy(update={"bbox": [0.0, 51.0, 2.0, 53.0]})
+        manager.cache_scene("txt_scene", item, "es")
+
+        result = await fn(
+            bbox=[0.5, 51.5, 1.5, 52.5],
+            scene_ids=["txt_scene"],
+            output_mode="text",
+        )
+
+        assert "Coverage check" in result
+        assert not result.startswith("{")
+
+
+# ---------------------------------------------------------------------------
+# stac_queryables tests
+# ---------------------------------------------------------------------------
+
+
+class TestStacQueryables:
+    async def test_happy_path(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_queryables")
+
+        mock_response = json.dumps(
+            {
+                "properties": {
+                    "eo:cloud_cover": {
+                        "type": "number",
+                        "description": "Cloud cover percentage",
+                    },
+                    "platform": {
+                        "type": "string",
+                        "description": "Satellite platform",
+                        "enum": ["sentinel-2a", "sentinel-2b"],
+                    },
+                }
+            }
+        ).encode()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = mock_response
+            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
+            result = json.loads(await fn())
+
+        assert result["queryable_count"] == 2
+        names = [q["name"] for q in result["queryables"]]
+        assert "eo:cloud_cover" in names
+        assert "platform" in names
+
+    async def test_with_collection(self, search_tools):
+        """Collection-scoped queryables should build correct URL."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_queryables")
+
+        mock_response = json.dumps({"properties": {}}).encode()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = mock_response
+            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
+            result = json.loads(await fn(collection="sentinel-2-l2a"))
+
+        assert result["collection"] == "sentinel-2-l2a"
+        # Verify URL was constructed with collection
+        call_args = mock_urlopen.call_args
+        req = call_args[0][0]
+        assert "/collections/sentinel-2-l2a/queryables" in req.full_url
+
+    async def test_enum_values(self, search_tools):
+        mcp, _ = search_tools
+        fn = mcp.get_tool("stac_queryables")
+
+        mock_response = json.dumps(
+            {
+                "properties": {
+                    "platform": {
+                        "type": "string",
+                        "enum": ["s2a", "s2b"],
+                    },
+                }
+            }
+        ).encode()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = mock_response
+            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
+            result = json.loads(await fn())
+
+        assert result["queryables"][0]["enum_values"] == ["s2a", "s2b"]
+
+    async def test_error_handling(self, search_tools):
+        mcp, _ = search_tools
+        fn = mcp.get_tool("stac_queryables")
+
+        with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
+            result = json.loads(await fn())
+
+        assert "error" in result
+
+    async def test_text_output(self, search_tools):
+        mcp, _ = search_tools
+        fn = mcp.get_tool("stac_queryables")
+
+        mock_response = json.dumps(
+            {
+                "properties": {
+                    "cloud": {"type": "number", "description": "Cloud cover"},
+                }
+            }
+        ).encode()
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = mock_response
+            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            mock_urlopen.return_value = mock_resp
+
+            result = await fn(output_mode="text")
+
+        assert "queryable" in result
+        assert not result.startswith("{")

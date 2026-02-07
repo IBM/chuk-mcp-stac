@@ -140,6 +140,8 @@ async def main() -> None:
 
     print(f"  Artifact: {dl_result['artifact_ref']}")
     print(f"  Shape: {dl_result['shape']}  CRS: {dl_result['crs']}")
+    if dl_result.get("preview_ref"):
+        print(f"  Preview: {dl_result['preview_ref']}")
 
     # Step 5: Render the image
     print("\nRendering Landsat RGB...")

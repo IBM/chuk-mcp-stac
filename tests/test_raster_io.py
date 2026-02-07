@@ -12,8 +12,11 @@ from chuk_mcp_stac.core.raster_io import (
     RasterReadResult,
     _read_one_band,
     _reproject_bbox,
+    estimate_band_size,
     merge_rasters,
+    quality_weighted_merge,
     read_bands_from_cogs,
+    temporal_composite_arrays,
 )
 from chuk_mcp_stac.models.stac import STACAsset
 
@@ -317,6 +320,57 @@ class TestParallelBandReads:
             assert np.all(src.read(3) == 300)
 
 
+class TestEstimateBandSize:
+    def test_single_band_no_bbox(self, temp_geotiff_dir):
+        """Estimate a single band without bbox cropping."""
+        path = create_temp_geotiff(temp_geotiff_dir, "red.tif", width=100, height=100)
+        assets = {"red": STACAsset(href=path)}
+
+        result = estimate_band_size(assets, ["red"])
+
+        assert len(result["per_band"]) == 1
+        assert result["per_band"][0]["band"] == "red"
+        assert result["per_band"][0]["width"] == 100
+        assert result["per_band"][0]["height"] == 100
+        assert result["per_band"][0]["dtype"] == "uint16"
+        assert result["total_pixels"] == 10000
+        assert result["estimated_bytes"] == 20000  # 10000 pixels * 2 bytes
+        assert result["estimated_mb"] == pytest.approx(20000 / (1024 * 1024), abs=0.01)
+        assert "EPSG:32631" in result["crs"]
+
+    def test_multi_band_no_bbox(self, temp_geotiff_dir):
+        """Estimate multiple bands."""
+        path_r = create_temp_geotiff(temp_geotiff_dir, "red.tif", width=50, height=50)
+        path_g = create_temp_geotiff(temp_geotiff_dir, "green.tif", width=50, height=50)
+        assets = {"red": STACAsset(href=path_r), "green": STACAsset(href=path_g)}
+
+        result = estimate_band_size(assets, ["red", "green"])
+
+        assert len(result["per_band"]) == 2
+        assert result["total_pixels"] == 5000  # 2500 * 2
+
+    def test_with_bbox_reduces_size(self, temp_geotiff_dir):
+        """Using a bbox should reduce the estimated dimensions."""
+        path = create_temp_geotiff(
+            temp_geotiff_dir,
+            "red.tif",
+            width=100,
+            height=100,
+            crs="EPSG:32631",
+            bounds=(500000, 5700000, 500100, 5700100),
+        )
+        assets = {"red": STACAsset(href=path)}
+
+        # Full size
+        full = estimate_band_size(assets, ["red"])
+        # Cropped — bbox covers roughly half the extent
+        bbox_4326_half = [0.849, 51.849, 0.8504, 51.8495]
+        # This will crop to a window, so should be smaller
+        cropped = estimate_band_size(assets, ["red"], bbox_4326_half)
+
+        assert cropped["total_pixels"] <= full["total_pixels"]
+
+
 class TestRasterReadResult:
     def test_frozen(self):
         r = RasterReadResult(data=b"x", crs="EPSG:4326")
@@ -327,3 +381,87 @@ class TestRasterReadResult:
         r = RasterReadResult(data=b"x", crs="EPSG:4326")
         assert r.shape == []
         assert r.dtype == ""
+
+
+class TestTemporalCompositeArrays:
+    def test_median_two_scenes(self):
+        a1 = [np.array([[10, 20]], dtype=np.float32)]
+        a2 = [np.array([[30, 40]], dtype=np.float32)]
+        result = temporal_composite_arrays([a1, a2], "median")
+        assert len(result) == 1
+        assert result[0].shape == (1, 2)
+        # median of [10,30]=20, [20,40]=30
+        np.testing.assert_allclose(result[0], [[20, 30]])
+
+    def test_mean_method(self):
+        a1 = [np.array([[10, 20]], dtype=np.float32)]
+        a2 = [np.array([[30, 40]], dtype=np.float32)]
+        result = temporal_composite_arrays([a1, a2], "mean")
+        np.testing.assert_allclose(result[0], [[20, 30]])
+
+    def test_max_method(self):
+        a1 = [np.array([[10, 40]], dtype=np.float32)]
+        a2 = [np.array([[30, 20]], dtype=np.float32)]
+        result = temporal_composite_arrays([a1, a2], "max")
+        np.testing.assert_allclose(result[0], [[30, 40]])
+
+    def test_min_method(self):
+        a1 = [np.array([[10, 40]], dtype=np.float32)]
+        a2 = [np.array([[30, 20]], dtype=np.float32)]
+        result = temporal_composite_arrays([a1, a2], "min")
+        np.testing.assert_allclose(result[0], [[10, 20]])
+
+    def test_unknown_method_raises(self):
+        with pytest.raises(ValueError, match="Unknown composite method"):
+            temporal_composite_arrays([[np.zeros((2, 2))]], "invalid")
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError, match="No scene arrays"):
+            temporal_composite_arrays([], "median")
+
+    def test_multi_band(self):
+        a1 = [np.array([[1, 2]], dtype=np.float32), np.array([[10, 20]], dtype=np.float32)]
+        a2 = [np.array([[3, 4]], dtype=np.float32), np.array([[30, 40]], dtype=np.float32)]
+        result = temporal_composite_arrays([a1, a2], "mean")
+        assert len(result) == 2
+        np.testing.assert_allclose(result[0], [[2, 3]])
+        np.testing.assert_allclose(result[1], [[20, 30]])
+
+
+class TestQualityWeightedMerge:
+    def test_prefers_vegetation(self):
+        """Pixel from scene with SCL=4 (vegetation) should be preferred."""
+        bands1 = [np.array([[100]], dtype=np.uint16)]
+        scl1 = np.array([[4]], dtype=np.uint8)  # vegetation - best
+        bands2 = [np.array([[200]], dtype=np.uint16)]
+        scl2 = np.array([[9]], dtype=np.uint8)  # cloud
+
+        result = quality_weighted_merge([(bands1, scl1), (bands2, scl2)])
+        assert result[0][0, 0] == 100
+
+    def test_single_scene_passthrough(self):
+        bands = [np.array([[50, 60]], dtype=np.uint16)]
+        scl = np.array([[4, 4]], dtype=np.uint8)
+        result = quality_weighted_merge([(bands, scl)])
+        np.testing.assert_array_equal(result[0], [[50, 60]])
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError, match="No scene data"):
+            quality_weighted_merge([])
+
+    def test_multi_band(self):
+        bands1 = [
+            np.array([[100]], dtype=np.uint16),
+            np.array([[10]], dtype=np.uint16),
+        ]
+        scl1 = np.array([[4]], dtype=np.uint8)
+        bands2 = [
+            np.array([[200]], dtype=np.uint16),
+            np.array([[20]], dtype=np.uint16),
+        ]
+        scl2 = np.array([[9]], dtype=np.uint8)
+
+        result = quality_weighted_merge([(bands1, scl1), (bands2, scl2)])
+        assert len(result) == 2
+        assert result[0][0, 0] == 100
+        assert result[1][0, 0] == 10

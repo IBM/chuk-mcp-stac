@@ -8,9 +8,9 @@
 
 ## Features
 
-This MCP server provides access to satellite imagery through STAC (SpatioTemporal Asset Catalog) APIs via eleven powerful tools.
+This MCP server provides access to satellite imagery through STAC (SpatioTemporal Asset Catalog) APIs via twenty tools.
 
-**All tools return fully-typed Pydantic v2 models** for type safety, validation, and excellent IDE support.
+**All tools return fully-typed Pydantic v2 models** for type safety, validation, and excellent IDE support. All tools support `output_mode="text"` for human-readable output alongside the default JSON.
 
 ### 1. Catalog Discovery (`stac_list_catalogs`)
 List available STAC catalogs:
@@ -38,47 +38,106 @@ Get detailed metadata for a scene:
 - Cloud cover, datetime, spatial extent
 - Filters out metadata-only assets
 
-### 5. Band Download (`stac_download_bands`)
+### 5. Scene Preview (`stac_preview`)
+Get a preview/thumbnail URL for a scene:
+- Returns `rendered_preview` or `thumbnail` asset URL
+- Prefers rendered previews over thumbnails
+- Fast visual browsing without downloading full bands
+
+### 6. Band Download (`stac_download_bands`)
 Download specific bands from a scene:
 - Any combination of bands (red, green, blue, nir, etc.)
+- Hardware band aliases supported (B04, B08, SR_B4, etc.)
 - Optional bbox cropping in EPSG:4326
-- Automatic CRS reprojection
-- Stored as GeoTIFF in artifact store
+- Output as GeoTIFF or PNG (auto-stretched)
+- SCL-based cloud masking (Sentinel-2 only)
 
-### 6. RGB Composite (`stac_download_rgb`)
+### 7. RGB Composite (`stac_download_rgb`)
 Download true-color RGB composites:
 - Convenience wrapper for red, green, blue bands
 - Automatic band resolution matching
+- PNG output for inline LLM rendering
 
-### 7. Custom Composite (`stac_download_composite`)
+### 8. Custom Composite (`stac_download_composite`)
 Create multi-band composites:
 - Any band combination (e.g., false-color infrared: nir, red, green)
 - Named composites for easy identification
+- Cloud masking and PNG output support
 
-### 8. Mosaic (`stac_mosaic`)
+### 9. Spectral Index (`stac_compute_index`)
+Compute spectral indices for a scene:
+- NDVI, NDWI, NDBI, EVI, SAVI, BSI
+- Automatically selects required bands
+- Cloud masking (masked pixels → NaN)
+- Output as float32 GeoTIFF or stretched PNG
+
+### 10. Mosaic (`stac_mosaic`)
 Merge multiple scenes into a single raster:
 - Combines overlapping scenes
-- Later scenes fill gaps from earlier ones
-- Useful for covering large areas
+- Standard merge (last) or quality-weighted (best pixel via SCL)
+- Per-scene cloud masking before merge
 
-### 9. Time Series (`stac_time_series`)
+### 11. Time Series (`stac_time_series`)
 Extract temporal band data:
 - Searches scenes across a date range
 - Downloads bands for each date
 - Concurrent downloads for performance
 - Cloud cover filtering
 
-### 10. Server Status (`stac_status`)
-Check server capabilities:
-- Lists all available tools
-- Shows supported catalogs and collections
-- Reports cache statistics
+### 12. Server Status (`stac_status`)
+Check server configuration:
+- Server version and storage provider
+- Default catalog
+- Artifact store availability
 
-### 11. Help (`stac_help`)
-Get usage guidance:
-- Example workflows
-- Band combination suggestions
-- Supported collections reference
+### 13. Capabilities (`stac_capabilities`)
+List full server capabilities for LLM workflow planning:
+- Available catalogs and collections
+- Spectral indices with required bands
+- Band mappings by satellite platform
+- Tool count
+
+### 14. Size Estimation (`stac_estimate_size`)
+Estimate download size before committing to a full download:
+- Reads only COG headers (no pixel data transferred)
+- Per-band dimensions, dtype, and byte estimates
+- Warnings for large downloads (>=500MB, >=1GB)
+
+### 15. Collection Intelligence (`stac_describe_collection`)
+Get detailed collection metadata with LLM-friendly guidance:
+- Band wavelengths and resolutions
+- Recommended composite recipes
+- Supported spectral indices
+- Cloud masking info and usage guidance
+
+### 16. Conformance Checking (`stac_get_conformance`)
+Check which STAC API features a catalog supports:
+- Parses conformance URIs into feature flags
+- Core, item_search, filter, sort, fields, query, collections
+
+### 17. Find Scene Pairs (`stac_find_pairs`)
+Find before/after scene pairs for change detection:
+- Separate before and after date ranges
+- Computes spatial overlap percentage per pair
+- Caches all found scenes for follow-up download
+
+### 18. Coverage Check (`stac_coverage_check`)
+Verify cached scenes fully cover a target area:
+- Rasterizes bounding box into a 100x100 grid
+- Returns coverage percentage and uncovered areas
+- Ensures full spatial coverage before download
+
+### 19. Queryable Properties (`stac_queryables`)
+Fetch queryable properties from a STAC API:
+- Catalog-level or collection-scoped queryables
+- Property names, types, descriptions, and enum values
+- Enables advanced CQL2 filter construction
+
+### 20. Temporal Composite (`stac_temporal_composite`)
+Combine multiple scenes via per-pixel statistics:
+- Methods: median, mean, max, min
+- Reduces cloud contamination in time series
+- SCL-based cloud masking per scene before compositing
 
 ## Installation
 
@@ -176,15 +235,40 @@ Once configured, you can ask Claude questions like:
 - "Search for Sentinel-2 imagery over London from last month"
 - "Download an RGB composite of that scene"
 - "Show me a false-color infrared view using NIR, red, and green bands"
+- "Compute the NDVI for this scene with cloud masking"
 - "Create a mosaic of these overlapping scenes"
 - "Get a time series of NDVI data for this farm over the growing season"
 - "What collections are available on Earth Search?"
+- "Describe the Sentinel-2 collection — what bands and composites are available?"
+- "How big would downloading 4 bands from that scene be?"
+- "What STAC API features does Earth Search support?"
+
+### Demo Scripts
+
+The `examples/` directory contains runnable demos:
+
+| Script | Network? | Description |
+|--------|----------|-------------|
+| `capabilities_demo.py` | No | Server capabilities, catalogs, band mappings, text output mode |
+| `collection_intel_demo.py` | Yes | Collection intelligence, conformance, size estimation |
+| `colchester_from_space.py` | Yes | Full pipeline: search → RGB → NDVI with rendering |
+| `mosaic_demo.py` | Yes | Multi-scene mosaic merge |
+| `time_series_demo.py` | Yes | Temporal NDVI extraction across dates |
+| `landsat_demo.py` | Yes | Landsat-specific band naming and download |
+
+```bash
+cd examples
+python capabilities_demo.py      # no network required
+python colchester_from_space.py   # requires matplotlib
+```
 
 ## Tool Reference
 
+All tools accept an optional `output_mode` parameter (`"json"` default, or `"text"` for human-readable output).
+Download tools that produce GeoTIFF output automatically generate a PNG preview (`preview_ref` in the response).
+
 ### stac_search
 
-Parameters:
 ```python
 {
   "bbox": [0.85, 51.85, 0.95, 51.92],        # [west, south, east, north]
@@ -198,39 +282,67 @@ Parameters:
 
 ### stac_download_bands
 
-Parameters:
 ```python
 {
   "scene_id": "S2B_...",                        # from search results
-  "bands": ["red", "green", "blue", "nir"],     # band names
-  "bbox": [0.85, 51.85, 0.95, 51.92]           # optional crop
+  "bands": ["red", "green", "blue", "nir"],     # common names or aliases (B04, SR_B4)
+  "bbox": [0.85, 51.85, 0.95, 51.92],          # optional crop
+  "output_format": "geotiff",                   # "geotiff" or "png"
+  "cloud_mask": false                            # Sentinel-2 only
 }
 ```
 
 ### stac_download_rgb
 
-Parameters:
 ```python
 {
   "scene_id": "S2B_...",
-  "bbox": [0.85, 51.85, 0.95, 51.92]           # optional crop
+  "bbox": [0.85, 51.85, 0.95, 51.92],          # optional crop
+  "output_format": "png",                        # "geotiff" or "png"
+  "cloud_mask": false                            # Sentinel-2 only
+}
+```
+
+### stac_download_composite
+
+```python
+{
+  "scene_id": "S2B_...",
+  "bands": ["nir", "red", "green"],             # false-color infrared
+  "composite_name": "false_color_ir",           # optional label
+  "bbox": [0.85, 51.85, 0.95, 51.92],          # optional crop
+  "output_format": "geotiff",                   # "geotiff" or "png"
+  "cloud_mask": false                            # Sentinel-2 only
+}
+```
+
+### stac_compute_index
+
+```python
+{
+  "scene_id": "S2B_...",
+  "index_name": "ndvi",                         # ndvi, ndwi, ndbi, evi, savi, bsi
+  "bbox": [0.85, 51.85, 0.95, 51.92],          # optional crop
+  "cloud_mask": true,                            # mask clouds with NaN
+  "output_format": "geotiff"                    # "geotiff" or "png"
 }
 ```
 
 ### stac_mosaic
 
-Parameters:
 ```python
 {
   "scene_ids": ["S2B_001", "S2B_002"],
   "bands": ["red", "green", "blue"],
-  "bbox": [0.85, 51.85, 0.95, 51.92]           # optional
+  "bbox": [0.85, 51.85, 0.95, 51.92],          # optional
+  "method": "last",                              # "last" or "quality" (SCL-based)
+  "output_format": "geotiff",                   # "geotiff" or "png"
+  "cloud_mask": false                            # per-scene masking before merge
 }
 ```
 
 ### stac_time_series
 
-Parameters:
 ```python
 {
   "bbox": [0.85, 51.85, 0.95, 51.92],
@@ -240,6 +352,35 @@ Parameters:
   "max_cloud_cover": 10,                         # optional
   "max_items": 50,                               # optional
   "catalog": "earth_search"                      # optional
+}
+```
+
+### stac_estimate_size
+
+```python
+{
+  "scene_id": "S2B_...",
+  "bands": ["red", "green", "blue", "nir"],
+  "bbox": [0.85, 51.85, 0.95, 51.92]            # optional crop
+}
+```
+
+### stac_describe_collection
+
+```python
+{
+  "collection_id": "sentinel-2-l2a",
+  "catalog": "earth_search",                     # optional
+  "output_mode": "text"                          # optional: "json" or "text"
+}
+```
+
+### stac_get_conformance
+
+```python
+{
+  "catalog": "earth_search",                     # optional
+  "output_mode": "json"                          # optional: "json" or "text"
 }
 ```
 
@@ -313,12 +454,26 @@ docker run -p 8002:8002 chuk-mcp-stac
 Built on top of chuk-mcp-server, this server uses:
 
 - **Async-First**: Native async/await with sync rasterio wrapped in `asyncio.to_thread()`
-- **Type-Safe**: Pydantic v2 models for all requests and responses
+- **Type-Safe**: Pydantic v2 models with `extra="forbid"` for all responses
 - **Efficient I/O**: Cloud-Optimized GeoTIFF (COG) reading with windowed access
-- **Smart Caching**: LRU scene cache (200 entries) for fast repeated access
+- **Smart Caching**: LRU scene cache (200 entries), TTL client cache (300s), in-memory raster cache (100 MB LRU)
 - **Band Resolution Matching**: Automatic bilinear resampling when bands differ in resolution
+- **Band Aliases**: Hardware names (B04, SR_B4) resolved to common names at entry
 - **Artifact Storage**: Pluggable storage via chuk-artifacts (memory, filesystem, S3)
 - **CRS Handling**: Automatic EPSG:4326 to native CRS reprojection for bbox queries
+- **Cloud Masking**: SCL-based masking for Sentinel-2 (integer → 0, float → NaN)
+- **Spectral Indices**: NDVI, NDWI, NDBI, EVI, SAVI, BSI with automatic band selection
+- **PNG Output**: 2nd-98th percentile stretch for visual inspection and LLM rendering
+- **Auto-Preview**: PNG preview auto-generated alongside every GeoTIFF download (`preview_ref`)
+- **Temporal Compositing**: Pixel-by-pixel statistical composites (median, mean, max, min)
+- **Quality Mosaics**: SCL-based best-pixel selection for quality-weighted merges
+- **Progress Callbacks**: Optional progress reporting for long-running operations
+- **PC Auth**: Automatic Planetary Computer asset signing when package is installed
+- **Dual Output**: All 20 tools support `output_mode="text"` for human-readable responses
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for design principles and data flow diagrams.
+See [SPEC.md](SPEC.md) for the full tool specification with parameter tables.
+See [ROADMAP.md](ROADMAP.md) for development status and planned features.
 
 ### Supported Catalogs
 
@@ -326,6 +481,9 @@ Built on top of chuk-mcp-server, this server uses:
 |---------|------------|-----|
 | Earth Search (AWS) | Sentinel-2, Landsat, NAIP, MODIS | earth-search.aws.element84.com |
 | Planetary Computer (Microsoft) | Sentinel-2, Landsat, MODIS | planetarycomputer.microsoft.com |
+| USGS Landsat Look | Landsat | landsatlook.usgs.gov |
+
+Also supports Sentinel-1 SAR (VV/VH) and Copernicus DEM GLO-30 collections.
 
 ## Contributing
 

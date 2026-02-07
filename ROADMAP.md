@@ -2,11 +2,11 @@
 
 ## Current State (v0.1.0)
 
-**Working:** All 11 tools functional with full STAC search -> download -> artifact pipeline.
+**Working:** All 20 tools functional with full STAC search -> download -> artifact pipeline.
 
-**Infrastructure:** Tests (178 passing, 95%+ coverage), CI/CD (GitHub Actions), README, LICENSE, Makefile, Dockerfile, Fly.io deployment.
+**Infrastructure:** Tests (504 passing, 94%+ coverage), CI/CD (GitHub Actions), README, LICENSE, Makefile, Dockerfile, Fly.io deployment.
 
-**Implemented:** Mosaic (`stac_mosaic`) and time series (`stac_time_series`) with concurrent downloads via `asyncio.gather`.
+**Implemented:** Mosaic (standard + quality-weighted), time series, temporal compositing, spectral indices, cloud masking, PNG output, preview, band aliases, auto-preview, size estimation, collection intelligence, conformance checking, dual output mode, find pairs, coverage check, queryables, in-memory raster cache, progress callbacks, Planetary Computer auth, USGS catalog, Sentinel-1 SAR, Copernicus DEM, enriched artifact metadata.
 
 ---
 
@@ -70,50 +70,84 @@
 
 ---
 
-## Phase 3: Production Hardening (v0.3.0) — IN PROGRESS
+## Phase 3: Production Hardening (v0.3.0) — COMPLETE
 
 ### 3.1 Performance
 
 - [x] Parallel band downloads within a scene (ThreadPoolExecutor)
 - [x] STAC client caching (TTL-based, thread-safe)
-- [ ] Optional in-memory caching for small rasters
-- [ ] Progress callbacks for long downloads
+- [x] In-memory raster cache (100 MB LRU, 10 MB per item)
+- [x] Progress callbacks for long downloads
 
 ### 3.2 Additional Catalogs
 
 - [x] Generic STAC catalog URL input (pass any https:// URL)
-- [ ] Microsoft Planetary Computer auth integration
-- [ ] USGS STAC catalog support
+- [x] Microsoft Planetary Computer auth integration (auto-detect + sign)
+- [x] USGS STAC catalog support
 
 ### 3.3 Extended Collections
 
 - [x] Landsat collection support with band mapping
-- [ ] Sentinel-1 SAR support
-- [ ] DEM collections (Copernicus GLO-30)
+- [x] Sentinel-1 SAR support (VV, VH polarisation)
+- [x] DEM collections (Copernicus GLO-30)
 
-### 3.4 Advanced Compositing
+### 3.4 Advanced Processing
 
-- [ ] Cloud masking using SCL band
-- [ ] Temporal compositing (median, max NDVI, etc.)
-- [ ] Quality-weighted mosaics (prefer low-cloud pixels)
+- [x] Cloud masking using SCL band (Sentinel-2 L2A)
+- [x] Spectral indices (NDVI, NDWI, NDBI, EVI, SAVI, BSI)
+- [x] PNG output with 2nd-98th percentile stretch
+- [x] Scene preview/thumbnail URL retrieval
+- [x] Hardware band alias resolution (B04 → red, SR_B4 → red)
+- [x] Temporal compositing (median, mean, max, min)
+- [x] Quality-weighted mosaics (prefer low-cloud pixels via SCL)
 
 ---
 
-## Phase 4: Integration (v0.4.0)
+## Phase 4: Integration (v0.4.0) — COMPLETE
 
 Bridge to chuk-mcp-geo analysis pipeline.
 
 ### 4.1 Artifact Handoff
 
-- [ ] Standardize artifact metadata schema for geo interop
-- [ ] Include band wavelength info in artifact metadata
-- [ ] Include acquisition geometry (sun angle, view angle) for advanced analysis
+- [x] Standardize artifact metadata schema (schema_version: "1.0")
+- [x] Include band wavelength info in artifact metadata
+- [x] Include acquisition geometry (sun angle, view angle) for advanced analysis
 
 ### 4.2 Convenience Tools
 
-- [ ] `stac_download_for_index` — auto-download bands needed for a spectral index
-- [ ] `stac_find_pairs` — find before/after scenes for change detection
-- [ ] `stac_coverage_check` — verify full bbox coverage before download
+- [x] `stac_compute_index` — compute spectral indices with automatic band selection
+- [x] `stac_find_pairs` — find before/after scenes for change detection
+- [x] `stac_coverage_check` — verify full bbox coverage before download
+
+---
+
+## Phase 5: Extended Capabilities — COMPLETE
+
+### 5.1 Collection & Catalog Introspection
+
+- [x] `stac_describe_collection` — collection intelligence with band wavelengths, composites, LLM guidance
+- [x] `stac_get_conformance` — parse STAC API conformance URIs into feature flags
+- [x] `stac_queryables` — expose queryable properties for a catalog
+
+### 5.2 Pre-Download Analysis
+
+- [x] `stac_estimate_size` — COG header-only reads for size estimation with warnings
+
+### 5.3 UX Enhancements
+
+- [x] Dual output mode — `output_mode="text"` for human-readable responses on all 20 tools
+- [x] Auto-preview — PNG preview auto-generated alongside every GeoTIFF download (`preview_ref`)
+- [x] Demo scripts — 6 examples (capabilities, collection intel, colchester, mosaic, time series, landsat)
+
+### 5.4 Advanced Compositing
+
+- [x] Temporal compositing methods (median, mean, max, min) via `stac_temporal_composite`
+- [x] Quality-weighted mosaics using SCL band (`stac_mosaic` method="quality")
+
+### Note on Geocoding
+
+Geocoding (place name → bbox) is planned as a **separate MCP server**, not part
+of chuk-mcp-stac. This server accepts only coordinate-based bounding boxes.
 
 ---
 
@@ -133,9 +167,10 @@ Bridge to chuk-mcp-geo analysis pipeline.
 |---------|-------|------------------|
 | 0.1.1 | Ship-ready | Tests, README, git, CI, Dockerfile, Fly.io |
 | 0.2.0 | Complete | Mosaic, time series download, retry logic |
-| 0.3.0 | Production | Parallel I/O, client caching, generic URLs, Landsat |
-| 0.4.0 | Integration | Geo handoff, convenience tools |
+| 0.3.0 | Production | Parallel I/O, client caching, Landsat, cloud mask, indices, PNG, preview, raster cache, PC auth, USGS, S1, DEM, temporal composite, quality mosaic |
+| 0.4.0 | Integration | Artifact metadata enrichment, find_pairs, coverage_check |
+| 0.5.0 | Extended | Collection intelligence, conformance, size estimation, queryables, dual output, auto-preview |
 
 ---
 
-*Last updated: 2025-02*
+*Last updated: 2026-02*

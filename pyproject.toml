@@ -21,9 +21,14 @@ dependencies = [
     "pyproj>=3.6.0",
     # Retry logic
     "tenacity>=8.2.0",
+    # PNG output for RGB composites
+    "Pillow>=9.0.0",
 ]
 
 [project.optional-dependencies]
+pc = [
+    "planetary-computer>=1.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

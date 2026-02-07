@@ -60,10 +60,14 @@ def make_stac_item(
     bands: list[str] | None = None,
     extra_assets: dict[str, dict[str, str]] | None = None,
     proj_epsg: int | None = 32631,
+    collection: str = "sentinel-2-l2a",
+    sun_elevation: float | None = None,
+    sun_azimuth: float | None = None,
+    view_off_nadir: float | None = None,
 ) -> STACItem:
     """Build a minimal STACItem that matches what tools expect."""
     if bands is None:
-        bands = ["red", "green", "blue", "nir", "swir16"]
+        bands = ["red", "green", "blue", "nir", "swir16", "scl"]
 
     assets: dict[str, STACAsset] = {}
     for b in bands:
@@ -80,11 +84,14 @@ def make_stac_item(
         datetime="2024-07-15T10:56:29Z",
         cloud_cover=cloud_cover,
         proj_epsg=proj_epsg,
+        sun_elevation=sun_elevation,
+        sun_azimuth=sun_azimuth,
+        view_off_nadir=view_off_nadir,
     )
 
     return STACItem(
         id=scene_id,
-        collection="sentinel-2-l2a",
+        collection=collection,
         bbox=list(SAMPLE_BBOX),
         properties=properties,
         assets=assets,
