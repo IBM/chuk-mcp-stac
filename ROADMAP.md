@@ -137,7 +137,7 @@ Bridge to chuk-mcp-geo analysis pipeline.
 
 - [x] Dual output mode — `output_mode="text"` for human-readable responses on all 20 tools
 - [x] Auto-preview — PNG preview auto-generated alongside every GeoTIFF download (`preview_ref`)
-- [x] Demo scripts — 6 examples (capabilities, collection intel, colchester, mosaic, time series, landsat)
+- [x] Demo scripts — 19 examples covering all 20 tools (9 core tool demos + 10 real-world showcases)
 
 ### 5.4 Advanced Compositing
 
@@ -155,6 +155,8 @@ of chuk-mcp-stac. This server accepts only coordinate-based bounding boxes.
 
 ### Not in Scope (for now)
 
+- **Vector/GeoParquet download** — separate server (needs geopandas/pyarrow, returns dataframes not rasters); covered by [isaaccorley/stac-mcp](https://github.com/isaaccorley/stac-mcp)
+- **Zarr/climate data** — separate server (needs xarray/zarr, n-dimensional data cubes not COG-based); covered by isaaccorley
 - **LiDAR/point cloud support** — different server
 - **Drone/photogrammetry ingest** — likely manual raster import
 - **GPR data** — specialized format, separate concern

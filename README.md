@@ -245,21 +245,42 @@ Once configured, you can ask Claude questions like:
 
 ### Demo Scripts
 
-The `examples/` directory contains runnable demos:
+The `examples/` directory contains 19 runnable demos covering all 20 tools. Each script is self-contained and produces a PNG output in `examples/output/`.
 
-| Script | Network? | Description |
+#### Core Tool Demos
+
+| Script | Network? | Tools Demonstrated |
 |--------|----------|-------------|
-| `capabilities_demo.py` | No | Server capabilities, catalogs, band mappings, text output mode |
-| `collection_intel_demo.py` | Yes | Collection intelligence, conformance, size estimation |
-| `colchester_from_space.py` | Yes | Full pipeline: search → RGB → NDVI with rendering |
-| `mosaic_demo.py` | Yes | Multi-scene mosaic merge |
-| `time_series_demo.py` | Yes | Temporal NDVI extraction across dates |
-| `landsat_demo.py` | Yes | Landsat-specific band naming and download |
+| `capabilities_demo.py` | No | `stac_capabilities`, `stac_status`, `stac_list_catalogs` |
+| `collection_intel_demo.py` | Yes | `stac_describe_collection`, `stac_get_conformance`, `stac_estimate_size` |
+| `colchester_from_space.py` | Yes | `stac_search` → `stac_download_rgb` → `stac_compute_index` |
+| `mosaic_demo.py` | Yes | `stac_search` → `stac_describe_scene` → `stac_mosaic` |
+| `time_series_demo.py` | Yes | `stac_time_series` → `stac_download_bands` |
+| `landsat_demo.py` | Yes | `stac_search` → `stac_download_bands` (Landsat band aliases) |
+| `change_detection_demo.py` | Yes | `stac_find_pairs` → `stac_preview` → `stac_coverage_check` |
+| `false_color_demo.py` | Yes | `stac_describe_collection` → `stac_download_composite` |
+| `temporal_composite_demo.py` | Yes | `stac_list_collections` → `stac_queryables` → `stac_temporal_composite` |
+
+#### Real-World Showcase Demos
+
+| Script | Location | What It Shows |
+|--------|----------|-------------|
+| `wildfire_scar_demo.py` | California, USA | Park Fire burn scar — before/after RGB, NDVI, false-colour SWIR composite |
+| `uk_flooding_demo.py` | Lincolnshire, UK | Storm Babet flooding — NDWI water index before/after with cloud masking |
+| `coastal_erosion_demo.py` | Yorkshire, UK | Holderness coast retreat — 2019 vs 2024 NDWI coastline comparison |
+| `crop_health_demo.py` | Cambridgeshire, UK | Wheat phenology — cloud-masked NDVI across growing season |
+| `dubai_growth_demo.py` | Dubai, UAE | Urban expansion — 2022 vs 2024 NDBI built-up index |
+| `vegas_f1_demo.py` | Las Vegas, USA | F1 race infrastructure — summer vs race week NDBI comparison |
+| `amazon_deforestation_demo.py` | Rondônia, Brazil | Dry season NDVI time series tracking deforestation |
+| `lake_chad_demo.py` | Chad/Nigeria | Seasonal water extent — NDWI wet vs dry season |
+| `singapore_port_demo.py` | Singapore | Port activity — RGB time series across 6 months |
+| `alps_snow_demo.py` | Mont Blanc, Alps | Snow cover — custom NDSI winter vs summer |
 
 ```bash
 cd examples
-python capabilities_demo.py      # no network required
-python colchester_from_space.py   # requires matplotlib
+python capabilities_demo.py        # no network required
+python colchester_from_space.py     # full search → download → render pipeline
+python wildfire_scar_demo.py        # before/after burn scar comparison
 ```
 
 ## Tool Reference
