@@ -401,6 +401,14 @@ def temporal_composite_arrays(
 
     func = COMPOSITE_METHODS[method]
     n_bands = len(scene_arrays[0])
+
+    # Use first scene's shape as reference; resample others to match
+    ref_shape = scene_arrays[0][0].shape
+    for scene in scene_arrays[1:]:
+        for band_idx in range(n_bands):
+            if scene[band_idx].shape != ref_shape:
+                scene[band_idx] = _resize_array(scene[band_idx], ref_shape)
+
     result: list[np.ndarray] = []
 
     for band_idx in range(n_bands):
@@ -472,6 +480,15 @@ def quality_weighted_merge(
 
 
 # ─── Spectral Index Computation ───────────────────────────────────────────────
+
+
+def _resize_array(arr: np.ndarray, target_shape: tuple[int, ...]) -> np.ndarray:
+    """Resize a 2D array to target shape using nearest-neighbour interpolation."""
+    src_h, src_w = arr.shape
+    tgt_h, tgt_w = target_shape
+    row_idx = (np.arange(tgt_h) * src_h / tgt_h).astype(int).clip(0, src_h - 1)
+    col_idx = (np.arange(tgt_w) * src_w / tgt_w).astype(int).clip(0, src_w - 1)
+    return arr[np.ix_(row_idx, col_idx)]
 
 
 def _safe_divide(numerator: np.ndarray, denominator: np.ndarray) -> np.ndarray:
