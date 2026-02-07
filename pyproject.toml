@@ -1,0 +1,96 @@
+[project]
+name = "chuk-mcp-stac"
+version = "0.1.0"
+description = "Satellite Imagery Discovery & Retrieval MCP Server"
+authors = []
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=0.9.1",
+    "chuk-mcp-server>=0.15.1",
+    "chuk-artifacts",
+    "python-dotenv>=1.1.1",
+    "pydantic>=2.0.0",
+    # STAC client
+    "pystac-client>=0.8.0",
+    # Raster I/O (for COG reading & band extraction)
+    "rasterio>=1.3.0",
+    "numpy>=1.24.0",
+    # CRS handling
+    "pyproj>=3.6.0",
+    # Retry logic
+    "tenacity>=8.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+    "bandit>=1.7.0",
+    "pre-commit>=3.0.0",
+    "matplotlib>=3.7.0",
+]
+
+[project.scripts]
+chuk-mcp-stac = "chuk_mcp_stac.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chuk_mcp_stac"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--tb=short",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+source = ["src/chuk_mcp_stac"]
+omit = [
+    "*/tests/*",
+    "*/examples/*",
+]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101"]
