@@ -6,6 +6,7 @@ Callers should wrap them in asyncio.to_thread() for async contexts.
 """
 
 import io
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -134,7 +135,15 @@ def read_bands_from_cogs(
     Returns:
         RasterReadResult with GeoTIFF bytes, CRS, shape, and dtype
     """
-    env = rasterio.Env(GDAL_HTTP_TIMEOUT=30)
+    # When AWS credentials are available, use signed requests with requester-pays
+    # (needed for Landsat requester-pays buckets). Otherwise fall back to
+    # anonymous access (sufficient for public Sentinel-2 COGs).
+    env_opts: dict[str, object] = {"GDAL_HTTP_TIMEOUT": 30}
+    if os.environ.get("AWS_ACCESS_KEY_ID"):
+        env_opts["AWS_REQUEST_PAYER"] = "requester"
+    else:
+        env_opts["AWS_NO_SIGN_REQUEST"] = "YES"
+    env = rasterio.Env(**env_opts)
 
     with env:
         # Read first band to establish CRS/transform/target shape
