@@ -465,3 +465,118 @@ class TestQualityWeightedMerge:
         assert len(result) == 2
         assert result[0][0, 0] == 100
         assert result[1][0, 0] == 10
+
+
+def _create_no_crs_geotiff(
+    tmp_dir: str,
+    name: str = "vv.tif",
+    width: int = 100,
+    height: int = 100,
+    fill_value: int = 500,
+) -> str:
+    """Create a GeoTIFF with no CRS and identity transform (simulates S1 GRD)."""
+    import os
+
+    path = os.path.join(tmp_dir, name)
+    data = np.full((height, width), fill_value, dtype="uint16")
+    with rasterio.open(
+        path, "w", driver="GTiff",
+        height=height, width=width, count=1, dtype="uint16",
+    ) as dst:
+        dst.write(data, 1)
+    return path
+
+
+class TestFallbackCrsTransform:
+    """Test fallback CRS/transform for COGs without embedded georeferencing."""
+
+    def test_read_one_band_no_crs_no_fallback_no_bbox(self, temp_geotiff_dir):
+        """Without bbox, reading works even without CRS."""
+        path = _create_no_crs_geotiff(temp_geotiff_dir)
+        data, crs, transform = _read_one_band(path, None, None)
+        assert data.shape == (100, 100)
+
+    def test_read_one_band_no_crs_with_fallback_and_bbox(self, temp_geotiff_dir):
+        """With fallback CRS/transform, bbox windowing works on no-CRS COGs."""
+        path = _create_no_crs_geotiff(temp_geotiff_dir, width=100, height=100)
+
+        # Fallback: EPSG:4326, pixel=0.01 degrees, origin at (-2.0, 53.0)
+        fb_crs = "EPSG:4326"
+        fb_transform = [0.01, 0.0, -2.0, 0.0, -0.01, 53.0]
+
+        # Bbox covering the middle area: -1.5 to -1.0 E, 52.5 to 52.8 N
+        bbox = [-1.5, 52.5, -1.0, 52.8]
+
+        data, crs, transform = _read_one_band(
+            path, bbox, None,
+            fallback_crs=fb_crs, fallback_transform=fb_transform,
+        )
+        assert crs == "EPSG:4326"
+        # Window should be smaller than full raster
+        assert data.shape[0] < 100
+        assert data.shape[1] < 100
+        assert data.shape[0] > 0
+        assert data.shape[1] > 0
+
+    def test_read_one_band_no_crs_bbox_no_overlap_raises(self, temp_geotiff_dir):
+        """Non-overlapping bbox with fallback should raise ValueError."""
+        path = _create_no_crs_geotiff(temp_geotiff_dir, width=100, height=100)
+
+        fb_crs = "EPSG:4326"
+        fb_transform = [0.01, 0.0, -2.0, 0.0, -0.01, 53.0]
+
+        # Bbox completely outside the raster extent
+        bbox = [10.0, 40.0, 11.0, 41.0]
+
+        with pytest.raises(ValueError, match="does not overlap"):
+            _read_one_band(
+                path, bbox, None,
+                fallback_crs=fb_crs, fallback_transform=fb_transform,
+            )
+
+    def test_read_bands_from_cogs_with_fallback(self, temp_geotiff_dir):
+        """read_bands_from_cogs passes fallback through to _read_one_band."""
+        path = _create_no_crs_geotiff(temp_geotiff_dir, name="vv.tif")
+        assets = {"vv": STACAsset(href=path)}
+
+        fb_crs = "EPSG:4326"
+        fb_transform = [0.01, 0.0, -2.0, 0.0, -0.01, 53.0]
+        bbox = [-1.5, 52.5, -1.0, 52.8]
+
+        result = read_bands_from_cogs(
+            assets, ["vv"], bbox,
+            fallback_crs=fb_crs, fallback_transform=fb_transform,
+        )
+        assert result.crs == "EPSG:4326"
+        assert len(result.data) > 0
+
+    def test_estimate_band_size_with_fallback(self, temp_geotiff_dir):
+        """estimate_band_size uses fallback for windowing."""
+        path = _create_no_crs_geotiff(temp_geotiff_dir, name="vv.tif")
+        assets = {"vv": STACAsset(href=path)}
+
+        fb_crs = "EPSG:4326"
+        fb_transform = [0.01, 0.0, -2.0, 0.0, -0.01, 53.0]
+        bbox = [-1.5, 52.5, -1.0, 52.8]
+
+        result = estimate_band_size(
+            assets, ["vv"], bbox,
+            fallback_crs=fb_crs, fallback_transform=fb_transform,
+        )
+        # Should succeed and report a smaller area than full raster
+        assert result["total_pixels"] > 0
+        assert result["total_pixels"] < 100 * 100
+
+    def test_fallback_not_used_when_crs_present(self, temp_geotiff_dir):
+        """When COG has embedded CRS, fallback is ignored."""
+        path = create_temp_geotiff(temp_geotiff_dir, "red.tif", fill_value=42)
+        assets = {"red": STACAsset(href=path)}
+
+        # Pass bogus fallback — should be ignored
+        result = read_bands_from_cogs(
+            assets, ["red"],
+            fallback_crs="EPSG:4326",
+            fallback_transform=[0.01, 0.0, 0.0, 0.0, -0.01, 90.0],
+        )
+        # CRS should be from the GeoTIFF, not the fallback
+        assert result.crs == "EPSG:32631"

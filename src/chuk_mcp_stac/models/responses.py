@@ -51,10 +51,15 @@ class SceneAsset(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    key: str = Field(..., description="Asset key in the STAC item")
-    href: str = Field(..., description="URL to the asset (COG)")
-    media_type: str | None = Field(None, description="MIME type of the asset")
-    resolution_m: float | None = Field(None, description="Ground sample distance in meters")
+    key: str = Field(..., description="Asset key in the STAC item (e.g., red, nir, vv)")
+    href: str = Field(..., description="URL to the asset (Cloud-Optimised GeoTIFF)")
+    media_type: str | None = Field(None, description="MIME type of the asset (usually image/tiff)")
+    resolution_m: float | None = Field(
+        None,
+        description="Ground sample distance in metres. "
+        "Sentinel-2: 10m (RGB/NIR), 20m (SWIR/RedEdge), 60m (atmospheric). "
+        "Landsat: 30m. Sentinel-1: 10m",
+    )
 
 
 class SceneInfo(BaseModel):
@@ -66,8 +71,15 @@ class SceneInfo(BaseModel):
     collection: str = Field(..., description="STAC collection name")
     datetime: str = Field(..., description="Acquisition date/time ISO 8601")
     bbox: list[float] = Field(..., description="Scene bounding box [west, south, east, north]")
-    cloud_cover: float | None = Field(None, description="Cloud cover percentage", ge=0, le=100)
-    thumbnail_url: str | None = Field(None, description="Thumbnail preview URL")
+    cloud_cover: float | None = Field(
+        None,
+        description="Cloud cover percentage (0-100). "
+        "<5%=clear, 5-20%=mostly clear, 20-50%=partly cloudy, >50%=cloudy. "
+        "None for non-optical collections (sentinel-1-grd, cop-dem-glo-30)",
+        ge=0,
+        le=100,
+    )
+    thumbnail_url: str | None = Field(None, description="Thumbnail preview URL if available")
     asset_count: int = Field(..., description="Number of available assets/bands", ge=0)
 
 
@@ -83,6 +95,10 @@ class SearchResponse(BaseModel):
     max_cloud_cover: int | None = Field(None, description="Cloud cover filter")
     scene_count: int = Field(..., description="Number of scenes found", ge=0)
     scenes: list[SceneInfo] = Field(..., description="Matching scenes")
+    hints: list[str] = Field(
+        default_factory=list,
+        description="Actionable hints when results are empty or limited",
+    )
     message: str = Field(..., description="Operation result message")
 
     def to_text(self) -> str:
@@ -90,6 +106,8 @@ class SearchResponse(BaseModel):
         for s in self.scenes:
             cloud = f" ({s.cloud_cover:.1f}% cloud)" if s.cloud_cover is not None else ""
             lines.append(f"  - {s.scene_id} [{s.datetime}]{cloud}")
+        for hint in self.hints:
+            lines.append(f"Hint: {hint}")
         return "\n".join(lines)
 
 
@@ -148,15 +166,27 @@ class BandDownloadResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scene_id: str = Field(..., description="Source scene identifier")
-    bands: list[str] = Field(..., description="Band names downloaded")
-    artifact_ref: str = Field(..., description="Artifact store reference for the downloaded data")
-    preview_ref: str | None = Field(
-        None, description="PNG preview artifact (auto-generated for GeoTIFF)"
+    bands: list[str] = Field(..., description="Band names downloaded (e.g., ['red', 'nir'])")
+    artifact_ref: str = Field(
+        ...,
+        description="Artifact store reference for the downloaded data. "
+        "Use this to retrieve the raster from the artifact store",
     )
-    bbox: list[float] = Field(..., description="Data bounding box")
-    crs: str = Field(..., description="CRS of the downloaded data")
-    shape: list[int] = Field(..., description="Array shape [bands, height, width]")
-    dtype: str = Field(..., description="Data type of the array")
+    preview_ref: str | None = Field(
+        None,
+        description="Auto-generated 8-bit PNG preview with 2nd-98th percentile stretch. "
+        "Created automatically when output_format is geotiff",
+    )
+    bbox: list[float] = Field(..., description="Data bounding box [west, south, east, north] in EPSG:4326")
+    crs: str = Field(..., description="CRS of the downloaded data (e.g., EPSG:32631)")
+    shape: list[int] = Field(
+        ..., description="Array shape [bands, height, width] in pixels"
+    )
+    dtype: str = Field(
+        ...,
+        description="Data type of the array. "
+        "uint16 = 16-bit unsigned (surface reflectance), float32 = 32-bit float (indices)",
+    )
     output_format: str = Field(default="geotiff", description="Output format: geotiff or png")
     message: str = Field(..., description="Operation result message")
 
@@ -178,11 +208,12 @@ class CompositeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scene_id: str = Field(..., description="Source scene identifier")
-    composite_type: str = Field(..., description="Composite type (rgb, false_color, etc.)")
-    bands: list[str] = Field(..., description="Bands used in composite")
-    artifact_ref: str = Field(..., description="Artifact store reference")
+    composite_type: str = Field(..., description="Composite type (e.g., rgb, false_color_ir)")
+    bands: list[str] = Field(..., description="Bands used in composite (order determines RGB mapping)")
+    artifact_ref: str = Field(..., description="Artifact store reference for the composite raster")
     preview_ref: str | None = Field(
-        None, description="PNG preview artifact (auto-generated for GeoTIFF)"
+        None,
+        description="Auto-generated 8-bit PNG preview with 2nd-98th percentile stretch",
     )
     bbox: list[float] = Field(..., description="Data bounding box")
     crs: str = Field(..., description="CRS of the composite")
@@ -208,17 +239,22 @@ class MosaicResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    scene_ids: list[str] = Field(..., description="Source scene identifiers")
+    scene_ids: list[str] = Field(..., description="Source scene identifiers used in mosaic")
     bands: list[str] = Field(..., description="Bands included in mosaic")
-    artifact_ref: str = Field(..., description="Artifact store reference")
+    artifact_ref: str = Field(..., description="Artifact store reference for the mosaic raster")
     preview_ref: str | None = Field(
-        None, description="PNG preview artifact (auto-generated for GeoTIFF)"
+        None, description="Auto-generated 8-bit PNG preview with 2nd-98th percentile stretch"
     )
-    bbox: list[float] = Field(..., description="Mosaic bounding box")
-    crs: str = Field(..., description="CRS of the mosaic")
-    shape: list[int] = Field(..., description="Array shape [bands, height, width]")
+    bbox: list[float] = Field(..., description="Mosaic bounding box [west, south, east, north]")
+    crs: str = Field(..., description="CRS of the mosaic (e.g., EPSG:32631)")
+    shape: list[int] = Field(..., description="Array shape [bands, height, width] in pixels")
     output_format: str = Field(default="geotiff", description="Output format: geotiff or png")
-    method: str = Field(default="last", description="Merge method: last or quality")
+    method: str = Field(
+        default="last",
+        description="Merge method used. "
+        "'last' = later scenes overwrite earlier gaps; "
+        "'quality' = SCL-based best-pixel selection (Sentinel-2 only)",
+    )
     message: str = Field(..., description="Operation result message")
 
     def to_text(self) -> str:
@@ -240,14 +276,20 @@ class IndexResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scene_id: str = Field(..., description="Source scene identifier")
-    index_name: str = Field(..., description="Spectral index name (e.g., ndvi)")
-    required_bands: list[str] = Field(..., description="Bands used for computation")
+    index_name: str = Field(..., description="Spectral index name (e.g., ndvi, ndwi, ndbi)")
+    required_bands: list[str] = Field(..., description="Bands used for computation (e.g., ['red', 'nir'])")
     value_range: list[float] = Field(
-        ..., description="[min, max] of computed index values (excluding NaN)"
+        ...,
+        description="[min, max] of computed index values (excluding NaN). "
+        "Typical: NDVI -1 to 1 (>0.6=dense vegetation, 0.2-0.6=moderate, <0.2=bare/water). "
+        "NDWI -1 to 1 (>0=water, <0=land). "
+        "NDBI -1 to 1 (>0=built-up, <0=natural)",
     )
-    artifact_ref: str = Field(..., description="Artifact store reference for the index raster")
+    artifact_ref: str = Field(
+        ..., description="Artifact store reference for the single-band float32 index raster"
+    )
     preview_ref: str | None = Field(
-        None, description="PNG preview artifact (auto-generated for GeoTIFF)"
+        None, description="Auto-generated 8-bit PNG preview with 2nd-98th percentile stretch"
     )
     bbox: list[float] = Field(..., description="Data bounding box")
     crs: str = Field(..., description="CRS of the output raster")
@@ -405,11 +447,15 @@ class BandSizeDetail(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    band: str = Field(..., description="Band name")
-    width: int = Field(..., description="Pixel width")
-    height: int = Field(..., description="Pixel height")
-    dtype: str = Field(..., description="Data type (e.g., uint16, float32)")
-    bytes: int = Field(..., description="Estimated size in bytes")
+    band: str = Field(..., description="Band name (e.g., red, nir)")
+    width: int = Field(..., description="Pixel width of the band")
+    height: int = Field(..., description="Pixel height of the band")
+    dtype: str = Field(
+        ...,
+        description="Data type. uint16 = 16-bit unsigned (reflectance), "
+        "float32 = 32-bit float (indices, DEM elevation)",
+    )
+    bytes: int = Field(..., description="Estimated size in bytes (uncompressed)")
 
 
 class SizeEstimateResponse(BaseModel):
@@ -422,7 +468,12 @@ class SizeEstimateResponse(BaseModel):
     per_band: list[BandSizeDetail] = Field(..., description="Per-band size details")
     total_pixels: int = Field(..., description="Total pixels across all bands")
     estimated_bytes: int = Field(..., description="Estimated total bytes")
-    estimated_mb: float = Field(..., description="Estimated total megabytes")
+    estimated_mb: float = Field(
+        ...,
+        description="Estimated total megabytes. "
+        ">500 MB is large — consider using a smaller bbox. "
+        ">1000 MB is very large",
+    )
     crs: str = Field(..., description="Coordinate reference system")
     bbox: list[float] = Field(default_factory=list, description="Crop bbox if provided")
     warnings: list[str] = Field(default_factory=list, description="Warnings for large downloads")
@@ -547,11 +598,19 @@ class TemporalCompositeResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    scene_ids: list[str] = Field(..., description="Source scene identifiers")
+    scene_ids: list[str] = Field(..., description="Source scene identifiers combined")
     bands: list[str] = Field(..., description="Bands composited")
-    method: str = Field(..., description="Compositing method (median, mean, max, min)")
-    artifact_ref: str = Field(..., description="Artifact store reference")
-    preview_ref: str | None = Field(None, description="PNG preview artifact")
+    method: str = Field(
+        ...,
+        description="Compositing method used. "
+        "'median' = robust cloud-free composite (recommended); "
+        "'mean' = average of all scenes; "
+        "'max'/'min' = extreme values (useful for peak NDVI or minimum temperature)",
+    )
+    artifact_ref: str = Field(..., description="Artifact store reference for the composite raster")
+    preview_ref: str | None = Field(
+        None, description="Auto-generated 8-bit PNG preview with 2nd-98th percentile stretch"
+    )
     bbox: list[float] = Field(..., description="Composite bounding box")
     crs: str = Field(..., description="CRS of the composite")
     shape: list[int] = Field(..., description="Array shape [bands, height, width]")

@@ -689,6 +689,17 @@ class TestSTACProperties:
         p = STACProperties.model_validate(raw)
         assert p.proj_code == "EPSG:32631"
 
+    def test_alias_proj_transform(self):
+        raw = {"proj:transform": [0.000256, 0, -2.29, 0, -7.18e-05, 53.25]}
+        p = STACProperties.model_validate(raw)
+        assert p.proj_transform is not None
+        assert len(p.proj_transform) == 6
+        assert p.proj_transform[0] == 0.000256
+
+    def test_proj_transform_none_by_default(self):
+        p = STACProperties()
+        assert p.proj_transform is None
+
     def test_extra_fields_preserved(self):
         raw = {"datetime": "2024-01-01T00:00:00Z", "platform": "sentinel-2b"}
         p = STACProperties.model_validate(raw)
@@ -776,6 +787,107 @@ class TestSTACItem:
         }
         item = STACItem.model_validate(raw)
         assert item.model_extra["type"] == "Feature"
+
+    def test_proj_affine_from_transform(self):
+        transform = [0.000256, 0, -2.29, 0, -7.18e-05, 53.25]
+        item = STACItem(
+            id="test",
+            properties=STACProperties(proj_transform=transform),
+        )
+        assert item.proj_affine == transform
+
+    def test_proj_affine_none_when_no_transform(self):
+        item = STACItem(id="test")
+        assert item.proj_affine is None
+
+    def test_proj_affine_from_stac_dict(self):
+        """Simulate S1 GRD STAC item with proj:transform."""
+        raw = {
+            "id": "S1A_test",
+            "collection": "sentinel-1-grd",
+            "properties": {
+                "datetime": "2023-10-15T06:15:12Z",
+                "proj:code": "EPSG:4326",
+                "proj:transform": [0.000256, 0, -2.29, 0, -7.18e-05, 53.25],
+            },
+            "assets": {
+                "vv": {"href": "s3://bucket/vv.tif"},
+            },
+        }
+        item = STACItem.model_validate(raw)
+        assert item.crs_string == "EPSG:4326"
+        assert item.proj_affine == [0.000256, 0, -2.29, 0, -7.18e-05, 53.25]
+
+    def test_s1_shape_field(self):
+        """PC S1 GRD uses s1:shape instead of proj:shape."""
+        raw = {"datetime": "2023-11-15T00:00:00Z", "s1:shape": [26105, 16673]}
+        props = STACProperties.model_validate(raw)
+        assert props.s1_shape == [26105, 16673]
+
+    def test_proj_shape_field(self):
+        raw = {"datetime": "2023-11-15T00:00:00Z", "proj:shape": [10980, 10980]}
+        props = STACProperties.model_validate(raw)
+        assert props.proj_shape == [10980, 10980]
+
+    def test_crs_string_from_bbox_shape(self):
+        """Infer EPSG:4326 when only bbox + s1:shape available (PC S1 GRD)."""
+        item = STACItem(
+            id="test",
+            bbox=[-2.68, 51.38, 1.53, 53.28],
+            properties=STACProperties(s1_shape=[26105, 16673]),
+        )
+        assert item.crs_string == "EPSG:4326"
+
+    def test_proj_affine_from_bbox_shape(self):
+        """Compute transform from bbox + s1:shape when proj:transform missing."""
+        item = STACItem(
+            id="test",
+            bbox=[-2.68, 51.38, 1.53, 53.28],
+            properties=STACProperties(s1_shape=[26105, 16673]),
+        )
+        affine = item.proj_affine
+        assert affine is not None
+        # pixel_x = (1.53 - (-2.68)) / 16673 ≈ 0.000252
+        assert abs(affine[0] - (1.53 - (-2.68)) / 16673) < 1e-10
+        assert affine[1] == 0.0
+        assert affine[2] == -2.68  # west
+        assert affine[3] == 0.0
+        # pixel_y = -(53.28 - 51.38) / 26105 ≈ -7.28e-05
+        assert abs(affine[4] - (-(53.28 - 51.38) / 26105)) < 1e-10
+        assert affine[5] == 53.28  # north
+
+    def test_proj_affine_prefers_explicit_transform(self):
+        """Explicit proj:transform takes precedence over bbox+shape computation."""
+        explicit = [0.1, 0.0, 10.0, 0.0, -0.1, 50.0]
+        item = STACItem(
+            id="test",
+            bbox=[-2.68, 51.38, 1.53, 53.28],
+            properties=STACProperties(
+                proj_transform=explicit,
+                s1_shape=[26105, 16673],
+            ),
+        )
+        assert item.proj_affine == explicit
+
+    def test_pc_s1_grd_stac_dict(self):
+        """Simulate Planetary Computer S1 GRD item (no proj:* props)."""
+        raw = {
+            "id": "S1A_IW_GRDH_1SDV_20231115T174210_20231115T174235_051231_062E17",
+            "collection": "sentinel-1-grd",
+            "bbox": [-2.680414, 51.378876, 1.52993, 53.280247],
+            "properties": {
+                "datetime": "2023-11-15T17:42:10Z",
+                "s1:shape": [26105, 16673],
+                "sar:instrument_mode": "IW",
+            },
+            "assets": {
+                "vv": {"href": "https://sentinel1euwest.blob.core.windows.net/vv.tif"},
+            },
+        }
+        item = STACItem.model_validate(raw)
+        assert item.crs_string == "EPSG:4326"
+        assert item.proj_affine is not None
+        assert len(item.proj_affine) == 6
 
     def test_json_roundtrip(self):
         item = STACItem(
@@ -879,6 +991,43 @@ class TestSearchResponseToText:
             message="No results",
         )
         assert "Found 0 scene(s)" in resp.to_text()
+
+    def test_hints_default_empty(self):
+        resp = SearchResponse(
+            catalog="earth_search",
+            collection="sentinel-2-l2a",
+            bbox=[0, 0, 1, 1],
+            scene_count=0,
+            scenes=[],
+            message="test",
+        )
+        assert resp.hints == []
+
+    def test_hints_rendered_in_text(self):
+        resp = SearchResponse(
+            catalog="earth_search",
+            collection="sentinel-2-l2a",
+            bbox=[0, 0, 1, 1],
+            scene_count=0,
+            scenes=[],
+            hints=["Try increasing max_cloud_cover", "Also available in planetary_computer"],
+            message="No scenes",
+        )
+        text = resp.to_text()
+        assert "Hint: Try increasing max_cloud_cover" in text
+        assert "Hint: Also available in planetary_computer" in text
+
+    def test_max_cloud_cover_none_for_non_optical(self):
+        resp = SearchResponse(
+            catalog="earth_search",
+            collection="sentinel-1-grd",
+            bbox=[0, 0, 1, 1],
+            max_cloud_cover=None,
+            scene_count=0,
+            scenes=[],
+            message="test",
+        )
+        assert resp.max_cloud_cover is None
 
 
 class TestSceneDetailResponseToText:

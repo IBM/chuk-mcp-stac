@@ -232,6 +232,29 @@ class CatalogManager:
             "view_off_nadir": item.properties.view_off_nadir,
         }
 
+    def _sign_pc_assets(self, scene_id: str, item: STACItem) -> dict[str, Any]:
+        """Return the item's assets dict, signing hrefs for Planetary Computer.
+
+        If the scene's catalog is ``planetary_computer`` and the
+        ``planetary-computer`` package is available, each asset href is
+        re-signed so that the SAS token is fresh at download time.
+        Otherwise the original assets dict is returned unchanged.
+        """
+        assets = item.assets
+        catalog = self.get_scene_catalog(scene_id)
+        if catalog != "planetary_computer":
+            return assets
+        try:
+            import planetary_computer  # type: ignore[import-not-found]
+
+            for asset in assets.values():
+                if asset.href and "blob.core.windows.net" in asset.href:
+                    asset.href = planetary_computer.sign_url(asset.href)
+            return assets
+        except ImportError:
+            logger.warning("planetary-computer not installed — cannot sign asset URLs")
+            return assets
+
     # ─── Raster Cache ────────────────────────────────────────────────────────
 
     @staticmethod
@@ -327,6 +350,7 @@ class CatalogManager:
         item = self.get_cached_scene(scene_id)
         if not item:
             raise ValueError(ErrorMessages.SCENE_NOT_FOUND.format(scene_id))
+        self._sign_pc_assets(scene_id, item)
 
         for band in band_names:
             if band not in item.assets:
@@ -347,6 +371,10 @@ class CatalogManager:
                 "to persist downloaded raster data."
             )
 
+        # Extract fallback projection metadata for COGs without embedded CRS
+        fb_crs = item.crs_string
+        fb_transform = item.proj_affine
+
         # Check in-memory raster cache
         cache_key = self._raster_cache_key(scene_id, band_names, bbox_4326, cloud_mask)
         cached = self._raster_cache_get(cache_key)
@@ -366,6 +394,8 @@ class CatalogManager:
                 all_bands,
                 bbox_4326,
                 frozenset({SCL_BAND_NAME}),
+                fb_crs,
+                fb_transform,
             )
 
             data_arrays = arr_result.arrays[:-1]
@@ -390,7 +420,8 @@ class CatalogManager:
 
             self._report_progress("reading_bands", 1, 1)
             result = await asyncio.to_thread(
-                read_bands_from_cogs, item.assets, band_names, bbox_4326
+                read_bands_from_cogs, item.assets, band_names, bbox_4326,
+                fb_crs, fb_transform,
             )
             geotiff_bytes = result.data
             crs = result.crs
@@ -466,6 +497,7 @@ class CatalogManager:
             item = self.get_cached_scene(sid)
             if not item:
                 raise ValueError(ErrorMessages.SCENE_NOT_FOUND.format(sid))
+            self._sign_pc_assets(sid, item)
             for band in band_names:
                 if band not in item.assets:
                     raise ValueError(ErrorMessages.BAND_NOT_FOUND.format(band))
@@ -496,6 +528,8 @@ class CatalogManager:
                     all_bands,
                     bbox_4326,
                     frozenset({SCL_BAND_NAME}),
+                    item.crs_string,  # type: ignore[union-attr]
+                    item.proj_affine,  # type: ignore[union-attr]
                 )
 
                 data_arrays = arr_result.arrays[:-1]
@@ -530,6 +564,8 @@ class CatalogManager:
                     item.assets,  # type: ignore[union-attr]
                     band_names,
                     bbox_4326,
+                    item.crs_string,  # type: ignore[union-attr]
+                    item.proj_affine,  # type: ignore[union-attr]
                 )
                 raster_results.append(result)
 
@@ -549,6 +585,8 @@ class CatalogManager:
                     all_bands,
                     bbox_4326,
                     frozenset({SCL_BAND_NAME}),
+                    item.crs_string,  # type: ignore[union-attr]
+                    item.proj_affine,  # type: ignore[union-attr]
                 )
                 if first_arr_result is None:
                     first_arr_result = arr_result
@@ -651,6 +689,7 @@ class CatalogManager:
             item = self.get_cached_scene(sid)
             if not item:
                 raise ValueError(ErrorMessages.SCENE_NOT_FOUND.format(sid))
+            self._sign_pc_assets(sid, item)
             for band in band_names:
                 if band not in item.assets:
                     raise ValueError(ErrorMessages.BAND_NOT_FOUND.format(band))
@@ -678,6 +717,8 @@ class CatalogManager:
         for i, sid in enumerate(scene_ids):
             self._report_progress("reading_scene", i + 1, n_scenes)
             item = self.get_cached_scene(sid)
+            fb_crs = item.crs_string  # type: ignore[union-attr]
+            fb_xform = item.proj_affine  # type: ignore[union-attr]
             if cloud_mask:
                 from .raster_io import apply_cloud_mask_float
 
@@ -688,6 +729,8 @@ class CatalogManager:
                     all_bands,
                     bbox_4326,
                     frozenset({SCL_BAND_NAME}),
+                    fb_crs,
+                    fb_xform,
                 )
                 data_arrays = apply_cloud_mask_float(
                     arr_result.arrays[: len(band_names)],
@@ -700,6 +743,9 @@ class CatalogManager:
                     item.assets,  # type: ignore[union-attr]
                     band_names,
                     bbox_4326,
+                    None,  # classification_bands
+                    fb_crs,
+                    fb_xform,
                 )
                 data_arrays = arr_result.arrays
 
@@ -800,6 +846,7 @@ class CatalogManager:
         item = self.get_cached_scene(scene_id)
         if not item:
             raise ValueError(ErrorMessages.SCENE_NOT_FOUND.format(scene_id))
+        self._sign_pc_assets(scene_id, item)
 
         required_bands = INDEX_BANDS[index_name]
         for band in required_bands:
@@ -828,7 +875,8 @@ class CatalogManager:
             classification_bands = frozenset({SCL_BAND_NAME})
 
         arr_result = await asyncio.to_thread(
-            read_bands_as_arrays, item.assets, read_bands, bbox_4326, classification_bands
+            read_bands_as_arrays, item.assets, read_bands, bbox_4326, classification_bands,
+            item.crs_string, item.proj_affine,
         )
 
         if cloud_mask:
@@ -926,6 +974,7 @@ class CatalogManager:
         item = self.get_cached_scene(scene_id)
         if not item:
             raise ValueError(ErrorMessages.SCENE_NOT_FOUND.format(scene_id))
+        self._sign_pc_assets(scene_id, item)
 
         for band in band_names:
             if band not in item.assets:
@@ -933,7 +982,10 @@ class CatalogManager:
 
         from .raster_io import estimate_band_size
 
-        result = await asyncio.to_thread(estimate_band_size, item.assets, band_names, bbox_4326)
+        result = await asyncio.to_thread(
+            estimate_band_size, item.assets, band_names, bbox_4326,
+            item.crs_string, item.proj_affine,
+        )
 
         # Add warnings for large downloads
         warnings: list[str] = []

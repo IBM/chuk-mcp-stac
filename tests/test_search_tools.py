@@ -205,6 +205,219 @@ class TestStacSearch:
         assert call_kwargs["max_items"] == 0
 
 
+class TestStacSearchCloudFilter:
+    """Tests for conditional cloud cover filter on non-optical collections."""
+
+    def _make_s1_item(self, scene_id="S1_GRD_001"):
+        item = MagicMock()
+        item.id = scene_id
+        item.bbox = SAMPLE_BBOX
+        item.properties = {"datetime": "2024-07-15T10:56:29Z"}
+        item.assets = {
+            "vv": MagicMock(href="https://example.com/vv.tif"),
+            "vh": MagicMock(href="https://example.com/vh.tif"),
+        }
+        item.to_dict.return_value = {
+            "id": scene_id,
+            "collection": "sentinel-1-grd",
+            "bbox": list(SAMPLE_BBOX),
+            "properties": {"datetime": "2024-07-15T10:56:29Z"},
+            "assets": {
+                "vv": {"href": "https://example.com/vv.tif", "type": "image/tiff"},
+                "vh": {"href": "https://example.com/vh.tif", "type": "image/tiff"},
+            },
+        }
+        return item
+
+    async def test_sentinel1_no_cloud_filter(self, search_tools):
+        """Sentinel-1 GRD search should NOT apply eo:cloud_cover filter."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_search")
+
+        mock_search = MagicMock()
+        mock_search.items.return_value = [self._make_s1_item()]
+        mock_client = MagicMock()
+        mock_client.search.return_value = mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(
+                await fn(bbox=SAMPLE_BBOX, collection="sentinel-1-grd")
+            )
+
+        call_kwargs = mock_client.search.call_args[1]
+        assert "query" not in call_kwargs
+        assert result["scene_count"] == 1
+        assert result["max_cloud_cover"] is None
+
+    async def test_cop_dem_no_cloud_filter(self, search_tools):
+        """cop-dem-glo-30 search should NOT apply eo:cloud_cover filter."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_search")
+
+        mock_search = MagicMock()
+        mock_search.items.return_value = []
+        mock_client = MagicMock()
+        mock_client.search.return_value = mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(
+                await fn(bbox=SAMPLE_BBOX, collection="cop-dem-glo-30")
+            )
+
+        call_kwargs = mock_client.search.call_args[1]
+        assert "query" not in call_kwargs
+        assert result["max_cloud_cover"] is None
+
+    async def test_optical_still_filters_cloud(self, search_tools):
+        """Sentinel-2 search should still apply eo:cloud_cover filter."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_search")
+
+        mock_search = MagicMock()
+        mock_search.items.return_value = []
+        mock_client = MagicMock()
+        mock_client.search.return_value = mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(
+                await fn(bbox=SAMPLE_BBOX, collection="sentinel-2-l2a", max_cloud_cover=30)
+            )
+
+        call_kwargs = mock_client.search.call_args[1]
+        assert "query" in call_kwargs
+        assert call_kwargs["query"]["eo:cloud_cover"]["lt"] == 30
+        assert result["max_cloud_cover"] == 30
+
+    async def test_sentinel1_hint_cloud_skipped(self, search_tools):
+        """Sentinel-1 results should include a hint about skipped cloud filter."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_search")
+
+        mock_search = MagicMock()
+        mock_search.items.return_value = [self._make_s1_item()]
+        mock_client = MagicMock()
+        mock_client.search.return_value = mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(
+                await fn(bbox=SAMPLE_BBOX, collection="sentinel-1-grd")
+            )
+
+        assert any("cloud cover filter skipped" in h.lower() for h in result["hints"])
+
+
+class TestStacSearchHints:
+    """Tests for actionable hints on zero results."""
+
+    async def test_zero_results_include_filters(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_search")
+
+        mock_search = MagicMock()
+        mock_search.items.return_value = []
+        mock_client = MagicMock()
+        mock_client.search.return_value = mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(
+                await fn(
+                    bbox=SAMPLE_BBOX,
+                    date_range="2024-06-01/2024-08-31",
+                    max_cloud_cover=10,
+                )
+            )
+
+        assert result["scene_count"] == 0
+        assert len(result["hints"]) > 0
+        filters_hint = [h for h in result["hints"] if "Filters applied" in h]
+        assert len(filters_hint) == 1
+        assert "max_cloud_cover=10%" in filters_hint[0]
+        assert "date_range=2024-06-01/2024-08-31" in filters_hint[0]
+
+    async def test_zero_results_suggests_increase_cloud(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_search")
+
+        mock_search = MagicMock()
+        mock_search.items.return_value = []
+        mock_client = MagicMock()
+        mock_client.search.return_value = mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(await fn(bbox=SAMPLE_BBOX, max_cloud_cover=5))
+
+        assert any("increasing max_cloud_cover" in h.lower() or "try increasing" in h.lower()
+                    for h in result["hints"])
+
+    async def test_zero_results_suggests_alt_catalogs(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_search")
+
+        mock_search = MagicMock()
+        mock_search.items.return_value = []
+        mock_client = MagicMock()
+        mock_client.search.return_value = mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(
+                await fn(bbox=SAMPLE_BBOX, collection="sentinel-2-l2a", catalog="earth_search")
+            )
+
+        assert any("planetary_computer" in h for h in result["hints"])
+
+    async def test_nonzero_results_no_filter_hints(self, search_tools):
+        """Successful searches for optical collections should not include filter hints."""
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_search")
+
+        mock_item = _make_mock_stac_item()
+        mock_search = MagicMock()
+        mock_search.items.return_value = [mock_item]
+        mock_client = MagicMock()
+        mock_client.search.return_value = mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            result = json.loads(await fn(bbox=SAMPLE_BBOX))
+
+        assert result["scene_count"] == 1
+        # Should have no hints for a successful optical search
+        assert result["hints"] == []
+
+
+class TestStacFindPairsCloudFilter:
+    """Tests for conditional cloud cover filter in stac_find_pairs."""
+
+    async def test_sentinel1_no_cloud_filter(self, search_tools):
+        mcp, manager = search_tools
+        fn = mcp.get_tool("stac_find_pairs")
+
+        mock_item = _make_mock_stac_item(scene_id="S1_B")
+        mock_item.properties = {"datetime": "2024-01-15T10:00:00Z"}
+        mock_item.to_dict.return_value["collection"] = "sentinel-1-grd"
+        mock_item.to_dict.return_value["properties"] = {
+            "datetime": "2024-01-15T10:00:00Z",
+        }
+
+        def _mock_search(**kwargs):
+            mock_s = MagicMock()
+            mock_s.items.return_value = [mock_item]
+            return mock_s
+
+        mock_client = MagicMock()
+        mock_client.search.side_effect = _mock_search
+
+        with patch.object(manager, "get_stac_client", return_value=mock_client):
+            await fn(
+                bbox=SAMPLE_BBOX,
+                before_range="2024-01-01/2024-03-31",
+                after_range="2024-07-01/2024-09-30",
+                collection="sentinel-1-grd",
+            )
+
+        for call in mock_client.search.call_args_list:
+            assert "query" not in call[1]
+
+
 class TestStacPreview:
     async def test_scene_not_found(self, search_tools):
         mcp, _ = search_tools

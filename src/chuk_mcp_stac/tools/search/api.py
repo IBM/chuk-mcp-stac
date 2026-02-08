@@ -12,6 +12,7 @@ import urllib.request
 import numpy as np
 
 from ...constants import (
+    COLLECTION_CATALOGS,
     COLLECTION_INTELLIGENCE,
     CONFORMANCE_CLASSES,
     DEFAULT_CATALOG,
@@ -26,6 +27,7 @@ from ...constants import (
     STACEndpoints,
     STACProperty,
     SuccessMessages,
+    collection_has_cloud_cover,
 )
 from ...models import (
     BandDetail,
@@ -72,12 +74,19 @@ def register_search_tools(mcp: object, manager: object) -> None:
         List all known STAC catalogs.
 
         Returns pre-configured catalog endpoints that can be searched.
+        Each catalog hosts different satellite collections.
 
         Args:
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
-            JSON with catalog names and URLs
+            JSON with catalog names and endpoint URLs
+
+        Tips for LLMs:
+            - Use stac_capabilities instead for a full overview including
+              collections, bands, and indices
+            - Default catalog is earth_search (AWS Element 84)
+            - planetary_computer requires no API key (auto-authenticated)
 
         Example:
             catalogs = await stac_list_catalogs()
@@ -100,13 +109,23 @@ def register_search_tools(mcp: object, manager: object) -> None:
         """
         List available collections in a STAC catalog.
 
+        Queries the catalog's live API to discover all hosted collections
+        with titles, descriptions, and spatial/temporal extents.
+
         Args:
-            catalog: Catalog name (default: earth_search)
-                Options: earth_search, planetary_computer
+            catalog: Catalog name (default: earth_search).
+                Options: earth_search, planetary_computer, usgs
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
-            JSON list of collections with metadata
+            JSON list of collections with titles, descriptions, and extents
+
+        Tips for LLMs:
+            - Use this to discover what data is available in a specific catalog
+            - For detailed band/composite info on a collection, follow up with
+              stac_describe_collection
+            - Different catalogs host different collections — if a collection
+              isn't found, try another catalog
 
         Example:
             collections = await stac_list_collections(catalog="earth_search")
@@ -177,17 +196,38 @@ def register_search_tools(mcp: object, manager: object) -> None:
         Results are cached for follow-up describe/download operations.
 
         Args:
-            bbox: Bounding box [west, south, east, north] in EPSG:4326
-            collection: STAC collection (default: sentinel-2-l2a)
-                Options: sentinel-2-l2a, sentinel-2-c1-l2a, landsat-c2-l2
-            date_range: Date range as "YYYY-MM-DD/YYYY-MM-DD" (optional)
-            max_cloud_cover: Maximum cloud cover percentage 0-100 (default: 20)
+            bbox: Bounding box [west, south, east, north] in EPSG:4326.
+                Example: [-0.7, 52.7, 0.5, 53.7] for Lincolnshire, UK
+            collection: STAC collection (default: sentinel-2-l2a).
+                Options:
+                - sentinel-2-l2a: Optical imagery, 10-20m resolution, 13 bands
+                - sentinel-2-c1-l2a: Reprocessed Sentinel-2 archive
+                - landsat-c2-l2: Optical imagery, 30m resolution, 11 bands
+                - sentinel-1-grd: SAR radar, 10m, sees through clouds (VV/VH)
+                - cop-dem-glo-30: Global elevation data, 30m
+            date_range: Date range as "YYYY-MM-DD/YYYY-MM-DD" (optional).
+                Omit for cop-dem-glo-30 (no temporal dimension)
+            max_cloud_cover: Maximum cloud cover percentage 0-100 (default: 20).
+                Ignored for non-optical collections (sentinel-1-grd, cop-dem-glo-30).
+                Increase to 30-50 if getting zero results
             max_items: Maximum results to return (default: 10)
-            catalog: Catalog name (default: earth_search)
+            catalog: Catalog name (default: earth_search).
+                Options: earth_search, planetary_computer, usgs
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
-            JSON with matching scenes sorted by cloud cover
+            JSON with matching scenes sorted by cloud cover (optical) or date
+
+        Tips for LLMs:
+            - Typical workflow: stac_search → stac_describe_scene → stac_download_bands
+            - For cloudy regions (e.g., UK autumn), increase max_cloud_cover to 50
+              or use sentinel-1-grd (SAR radar, not affected by clouds)
+            - For flood mapping: use sentinel-1-grd (water appears dark in VV/VH)
+            - For vegetation analysis: use sentinel-2-l2a with NDVI index
+            - For elevation/terrain: use cop-dem-glo-30 (no date_range needed)
+            - If zero results, check the hints field for suggestions (try different
+              catalog, increase cloud cover, widen date range)
+            - Scenes are cached — use scene_id in subsequent describe/download calls
 
         Example:
             results = await stac_search(
@@ -226,6 +266,7 @@ def register_search_tools(mcp: object, manager: object) -> None:
             coll = collection or DEFAULT_COLLECTION
             cloud_max = max_cloud_cover if max_cloud_cover is not None else MAX_CLOUD_COVER
             items_max = max_items if max_items is not None else MAX_ITEMS
+            has_cloud = collection_has_cloud_cover(coll)
 
             def _search() -> list[object]:
                 client = manager.get_stac_client(catalog_url)  # type: ignore[union-attr]
@@ -238,14 +279,22 @@ def register_search_tools(mcp: object, manager: object) -> None:
                 if date_range:
                     search_kwargs["datetime"] = date_range
 
-                # Apply cloud cover filter via query
-                search_kwargs["query"] = {STACProperty.CLOUD_COVER: {"lt": cloud_max}}
+                # Only apply cloud cover filter for optical collections
+                if has_cloud:
+                    search_kwargs["query"] = {STACProperty.CLOUD_COVER: {"lt": cloud_max}}
 
                 search = client.search(**search_kwargs)
                 items = list(search.items())
 
-                # Sort by cloud cover ascending
-                items.sort(key=lambda x: x.properties.get(STACProperty.CLOUD_COVER, 100))
+                # Sort by cloud cover ascending (optical) or datetime (non-optical)
+                if has_cloud:
+                    items.sort(
+                        key=lambda x: x.properties.get(STACProperty.CLOUD_COVER, 100)
+                    )
+                else:
+                    items.sort(
+                        key=lambda x: x.properties.get(STACProperty.DATETIME, "")
+                    )
 
                 return items
 
@@ -273,8 +322,37 @@ def register_search_tools(mcp: object, manager: object) -> None:
                     )
                 )
 
+            # Build hints
+            hints: list[str] = []
+
+            if not has_cloud:
+                hints.append(
+                    f"Cloud cover filter skipped for '{coll}' (non-optical collection)."
+                )
+
             if not scenes:
                 msg = ErrorMessages.NO_RESULTS
+
+                filters_applied = [f"bbox={bbox}"]
+                if date_range:
+                    filters_applied.append(f"date_range={date_range}")
+                if has_cloud:
+                    filters_applied.append(f"max_cloud_cover={cloud_max}%")
+                hints.append(f"Filters applied: {', '.join(filters_applied)}")
+
+                if has_cloud and cloud_max < 50:
+                    hints.append(
+                        f"Try increasing max_cloud_cover (currently {cloud_max}%). "
+                        "Values of 30-50 often yield more results."
+                    )
+
+                alt_catalogs = COLLECTION_CATALOGS.get(coll, [])
+                other_catalogs = [c for c in alt_catalogs if c != catalog_name]
+                if other_catalogs:
+                    hints.append(
+                        f"Collection '{coll}' is also available in: "
+                        f"{', '.join(other_catalogs)}. Try searching a different catalog."
+                    )
             else:
                 msg = SuccessMessages.SEARCH_COMPLETE.format(len(scenes))
 
@@ -284,9 +362,10 @@ def register_search_tools(mcp: object, manager: object) -> None:
                     collection=coll,
                     bbox=bbox,
                     date_range=date_range,
-                    max_cloud_cover=cloud_max,
+                    max_cloud_cover=cloud_max if has_cloud else None,
                     scene_count=len(scenes),
                     scenes=scenes,
+                    hints=hints,
                     message=msg,
                 ),
                 output_mode,
@@ -304,15 +383,21 @@ def register_search_tools(mcp: object, manager: object) -> None:
         """
         Get detailed information about a specific scene.
 
-        Shows all available assets/bands, properties, and download URLs.
+        Shows all available assets/bands, properties, CRS, and download URLs.
         The scene must have been returned by a previous stac_search call.
 
         Args:
-            scene_id: Scene identifier from a search result
+            scene_id: Scene identifier from a search result (use scene_id from stac_search)
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
-            JSON with full scene details including all assets
+            JSON with full scene details including all assets, CRS, and properties
+
+        Tips for LLMs:
+            - Call this after stac_search to see available bands before downloading
+            - The assets list shows every downloadable band and its resolution
+            - Use the band keys (e.g., red, nir, scl) in stac_download_bands
+            - Check cloud_cover to decide if the scene is usable
 
         Example:
             detail = await stac_describe_scene(
@@ -386,11 +471,16 @@ def register_search_tools(mcp: object, manager: object) -> None:
         The scene must have been returned by a previous stac_search call.
 
         Args:
-            scene_id: Scene identifier from a search result
+            scene_id: Scene identifier from a search result (use scene_id from stac_search)
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
             JSON with preview_url for the scene's thumbnail
+
+        Tips for LLMs:
+            - Use for quick visual checks before committing to full band downloads
+            - The preview URL is a remote image that can be displayed directly
+            - Not all scenes have thumbnails — check for errors in the response
 
         Example:
             preview = await stac_preview(scene_id="S2B_...")
@@ -442,16 +532,29 @@ def register_search_tools(mcp: object, manager: object) -> None:
         Returns band wavelengths, recommended composites, supported spectral
         indices, cloud masking info, and LLM-friendly usage guidance.
 
-        For known collections (Sentinel-2, Landsat), provides rich metadata.
+        For known collections (Sentinel-2, Landsat, Sentinel-1, DEM), provides
+        rich metadata including band names needed for download tools.
         Unknown collections still return live STAC metadata.
 
         Args:
-            collection_id: Collection identifier (e.g., "sentinel-2-l2a")
-            catalog: Catalog name (default: earth_search)
+            collection_id: Collection identifier.
+                Options: sentinel-2-l2a, sentinel-2-c1-l2a, landsat-c2-l2,
+                         sentinel-1-grd, cop-dem-glo-30
+            catalog: Catalog name (default: earth_search).
+                Options: earth_search, planetary_computer, usgs
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
             JSON with band details, composites, spectral indices, and guidance
+
+        Tips for LLMs:
+            - Call this to discover band names before using stac_download_bands
+            - The composites field lists pre-defined band combinations
+              (e.g., true_color = [red, green, blue])
+            - The spectral_indices field shows which indices this collection supports
+            - The llm_guidance field contains domain-specific usage advice
+            - Check cloud_mask_band — if None, the collection is non-optical
+              (SAR radar or DEM) and cloud_mask=True will fail
 
         Example:
             detail = await stac_describe_collection(
@@ -557,14 +660,21 @@ def register_search_tools(mcp: object, manager: object) -> None:
         Check which STAC API features a catalog supports.
 
         Reads the catalog's conformance URIs and matches them against
-        known STAC API conformance classes to determine feature support.
+        known STAC API conformance classes to determine feature support
+        (core, item_search, filter, sort, fields, query, collections).
 
         Args:
-            catalog: Catalog name (default: earth_search)
+            catalog: Catalog name (default: earth_search).
+                Options: earth_search, planetary_computer, usgs
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
             JSON with feature support flags and raw conformance URIs
+
+        Tips for LLMs:
+            - Rarely needed — most workflows don't require conformance checking
+            - Useful for debugging when a catalog doesn't support expected features
+            - Check for "query" support if advanced filtering is needed
 
         Example:
             conformance = await stac_get_conformance(catalog="earth_search")
@@ -653,19 +763,35 @@ def register_search_tools(mcp: object, manager: object) -> None:
         Find before/after scene pairs for change detection.
 
         Searches two date ranges and matches scenes by spatial overlap,
-        useful for detecting changes between time periods.
+        useful for detecting changes between time periods (e.g., flood
+        damage, urban growth, deforestation, seasonal vegetation change).
 
         Args:
             bbox: Bounding box [west, south, east, north] in EPSG:4326
             before_range: Before date range "YYYY-MM-DD/YYYY-MM-DD"
             after_range: After date range "YYYY-MM-DD/YYYY-MM-DD"
-            collection: STAC collection (default: sentinel-2-l2a)
-            max_cloud_cover: Maximum cloud cover percentage 0-100 (default: 20)
-            catalog: Catalog name (default: earth_search)
+            collection: STAC collection (default: sentinel-2-l2a).
+                Options: sentinel-2-l2a, sentinel-2-c1-l2a, landsat-c2-l2,
+                         sentinel-1-grd, cop-dem-glo-30
+            max_cloud_cover: Maximum cloud cover percentage 0-100 (default: 20).
+                Ignored for non-optical collections (sentinel-1-grd, cop-dem-glo-30).
+            catalog: Catalog name (default: earth_search).
+                Options: earth_search, planetary_computer, usgs
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
             JSON with matched scene pairs sorted by overlap percentage
+
+        Tips for LLMs:
+            - Best for change detection workflows: find pairs, then download
+              the same bands for before/after scenes and compare
+            - For flood mapping: use sentinel-1-grd (SAR sees through clouds)
+              with before_range = dry season, after_range = flood event
+            - For vegetation change: use sentinel-2-l2a, then compute NDVI
+              for each scene in the pair
+            - Higher overlap_percent means better spatial coverage for comparison
+            - Follow up with stac_download_bands or stac_compute_index on each
+              scene in the pair
 
         Example:
             pairs = await stac_find_pairs(
@@ -679,16 +805,21 @@ def register_search_tools(mcp: object, manager: object) -> None:
             catalog_name = catalog or DEFAULT_CATALOG
             coll = collection or DEFAULT_COLLECTION
             cloud_max = max_cloud_cover if max_cloud_cover is not None else MAX_CLOUD_COVER
+            has_cloud = collection_has_cloud_cover(coll)
 
             def _search_range(date_range: str) -> list[object]:
                 client = manager.get_stac_client(catalog_url)  # type: ignore[union-attr]
-                search = client.search(
-                    collections=[coll],
-                    bbox=bbox,
-                    datetime=date_range,
-                    max_items=MAX_ITEMS,
-                    query={STACProperty.CLOUD_COVER: {"lt": cloud_max}},
-                )
+                search_kwargs: dict[str, object] = {
+                    "collections": [coll],
+                    "bbox": bbox,
+                    "datetime": date_range,
+                    "max_items": MAX_ITEMS,
+                }
+                if has_cloud:
+                    search_kwargs["query"] = {
+                        STACProperty.CLOUD_COVER: {"lt": cloud_max},
+                    }
+                search = client.search(**search_kwargs)
                 return list(search.items())
 
             before_items, after_items = await asyncio.gather(
@@ -751,15 +882,23 @@ def register_search_tools(mcp: object, manager: object) -> None:
         Check if cached scenes fully cover a requested bounding box.
 
         Rasterizes the target bbox into a grid and checks which cells
-        are covered by the provided scenes. Useful for planning mosaics.
+        are covered by the provided scenes. Useful for planning mosaics
+        to ensure gap-free coverage.
 
         Args:
             bbox: Target bounding box [west, south, east, north] in EPSG:4326
-            scene_ids: Scene identifiers (must be cached from prior searches)
+            scene_ids: Scene identifiers (must be cached from prior stac_search calls)
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
             JSON with coverage percentage and uncovered areas
+
+        Tips for LLMs:
+            - Call this before stac_mosaic to verify scenes fully cover your
+              area of interest
+            - If coverage is less than 100%, search for more scenes or
+              widen the date range to find additional tiles
+            - Scenes must have been found by a prior stac_search call
 
         Example:
             check = await stac_coverage_check(
@@ -849,15 +988,23 @@ def register_search_tools(mcp: object, manager: object) -> None:
         Fetch queryable properties from a STAC API.
 
         Returns the properties that can be used in search queries,
-        including their types and allowed values.
+        including their types and allowed values. Useful for understanding
+        what filtering options are available.
 
         Args:
-            catalog: Catalog name (default: earth_search)
+            catalog: Catalog name (default: earth_search).
+                Options: earth_search, planetary_computer, usgs
             collection: Optional collection to scope queryables
+                (e.g., "sentinel-2-l2a" for collection-specific properties)
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
             JSON with queryable property names, types, and descriptions
+
+        Tips for LLMs:
+            - Rarely needed — stac_search handles common filters automatically
+            - Useful when debugging why searches return unexpected results
+            - Different catalogs support different queryable properties
 
         Example:
             queryables = await stac_queryables(

@@ -3,6 +3,7 @@
 from chuk_mcp_stac.constants import (
     BAND_ALIASES,
     CLIENT_CACHE_TTL,
+    COLLECTION_CATALOGS,
     COLLECTION_INTELLIGENCE,
     CONFORMANCE_CLASSES,
     DEFAULT_CATALOG,
@@ -41,6 +42,7 @@ from chuk_mcp_stac.constants import (
     STACProperty,
     StorageProvider,
     SuccessMessages,
+    collection_has_cloud_cover,
     resolve_band_name,
 )
 
@@ -457,3 +459,43 @@ class TestRasterCacheConstants:
 
     def test_item_smaller_than_total(self):
         assert RASTER_CACHE_MAX_ITEM < RASTER_CACHE_MAX_BYTES
+
+
+class TestCollectionHasCloudCover:
+    def test_sentinel_2_l2a_has_cloud_cover(self):
+        assert collection_has_cloud_cover("sentinel-2-l2a") is True
+
+    def test_sentinel_2_c1_l2a_has_cloud_cover(self):
+        assert collection_has_cloud_cover("sentinel-2-c1-l2a") is True
+
+    def test_landsat_has_cloud_cover(self):
+        assert collection_has_cloud_cover("landsat-c2-l2") is True
+
+    def test_sentinel_1_grd_no_cloud_cover(self):
+        assert collection_has_cloud_cover("sentinel-1-grd") is False
+
+    def test_cop_dem_glo_30_no_cloud_cover(self):
+        assert collection_has_cloud_cover("cop-dem-glo-30") is False
+
+    def test_unknown_collection_defaults_to_true(self):
+        assert collection_has_cloud_cover("my-custom-collection") is True
+
+
+class TestCollectionCatalogs:
+    def test_all_known_collections_present(self):
+        for coll in SatelliteCollection.ALL:
+            assert coll in COLLECTION_CATALOGS, f"{coll} missing from COLLECTION_CATALOGS"
+
+    def test_sentinel_2_in_multiple_catalogs(self):
+        cats = COLLECTION_CATALOGS["sentinel-2-l2a"]
+        assert "earth_search" in cats
+        assert "planetary_computer" in cats
+
+    def test_sentinel_1_in_catalogs(self):
+        cats = COLLECTION_CATALOGS["sentinel-1-grd"]
+        assert len(cats) >= 1
+
+    def test_all_catalogs_are_valid(self):
+        for coll, cats in COLLECTION_CATALOGS.items():
+            for cat in cats:
+                assert cat in STACEndpoints.ALL, f"Unknown catalog '{cat}' for {coll}"

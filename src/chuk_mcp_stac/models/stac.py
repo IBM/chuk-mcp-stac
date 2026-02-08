@@ -33,6 +33,9 @@ class STACProperties(BaseModel):
     cloud_cover: float | None = Field(None, alias="eo:cloud_cover")
     proj_epsg: int | None = Field(None, alias="proj:epsg")
     proj_code: str | None = Field(None, alias="proj:code")
+    proj_transform: list[float] | None = Field(None, alias="proj:transform")
+    proj_shape: list[int] | None = Field(None, alias="proj:shape")
+    s1_shape: list[int] | None = Field(None, alias="s1:shape")
     gsd: float | None = None
     sun_elevation: float | None = Field(None, alias="view:sun_elevation")
     sun_azimuth: float | None = Field(None, alias="view:sun_azimuth")
@@ -64,4 +67,25 @@ class STACItem(BaseModel):
         code = self.properties.proj_code
         if code is not None:
             return code
+        # Infer EPSG:4326 when we can compute transform from bbox + shape
+        # (STAC item bbox is always WGS84 per spec)
+        shape = self.properties.proj_shape or self.properties.s1_shape
+        if shape and len(shape) >= 2 and self.bbox and len(self.bbox) >= 4:
+            return "EPSG:4326"
+        return None
+
+    @property
+    def proj_affine(self) -> list[float] | None:
+        """Return proj:transform as a 6-element affine list, or None."""
+        t = self.properties.proj_transform
+        if t and len(t) >= 6:
+            return t[:6]
+        # Compute from bbox + shape (STAC bbox is always EPSG:4326)
+        shape = self.properties.proj_shape or self.properties.s1_shape
+        if shape and len(shape) >= 2 and self.bbox and len(self.bbox) >= 4:
+            height, width = shape[0], shape[1]
+            west, south, east, north = self.bbox[:4]
+            pixel_x = (east - west) / width
+            pixel_y = -(north - south) / height
+            return [pixel_x, 0.0, west, 0.0, pixel_y, north]
         return None

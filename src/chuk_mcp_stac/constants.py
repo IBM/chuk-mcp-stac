@@ -302,6 +302,29 @@ COLLECTION_INTELLIGENCE: dict[str, dict] = {
     },
 }
 
+
+def collection_has_cloud_cover(collection_id: str) -> bool:
+    """Return True if the collection supports eo:cloud_cover filtering.
+
+    Uses COLLECTION_INTELLIGENCE to check for a non-None cloud_mask_band.
+    Unknown collections default to True (preserves existing behaviour).
+    """
+    intel = COLLECTION_INTELLIGENCE.get(collection_id)
+    if intel is None:
+        return True
+    return intel.get("cloud_mask_band") is not None
+
+
+# Collection -> catalogs that typically host it (for fallback suggestions)
+COLLECTION_CATALOGS: dict[str, list[str]] = {
+    "sentinel-2-l2a": ["earth_search", "planetary_computer"],
+    "sentinel-2-c1-l2a": ["earth_search"],
+    "landsat-c2-l2": ["earth_search", "planetary_computer", "usgs"],
+    "sentinel-1-grd": ["earth_search", "planetary_computer"],
+    "cop-dem-glo-30": ["planetary_computer"],
+}
+
+
 # ─── Conformance Classes ─────────────────────────────────────────────────────
 # Maps feature names to known conformance URI patterns for STAC API parsing.
 

@@ -18,7 +18,8 @@ from rasterio.enums import Resampling
 from rasterio.io import MemoryFile
 from rasterio.merge import merge
 from rasterio.transform import Affine
-from rasterio.windows import from_bounds
+from rasterio.errors import WindowError
+from rasterio.windows import Window, from_bounds
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from ..constants import MAX_BAND_WORKERS, RETRY_ATTEMPTS, RETRY_MAX_WAIT, RETRY_MIN_WAIT
@@ -72,6 +73,8 @@ def _read_one_band(
     bbox_4326: list[float] | None,
     target_shape: tuple[int, int] | None,
     resampling: Resampling = Resampling.bilinear,
+    fallback_crs: str | None = None,
+    fallback_transform: list[float] | None = None,
 ) -> tuple[np.ndarray, str, object]:
     """
     Read a single band from a COG with retry on transient network errors.
@@ -81,16 +84,28 @@ def _read_one_band(
         bbox_4326: Optional crop bbox in EPSG:4326
         target_shape: If set, resample to this (height, width)
         resampling: Resampling method (default bilinear; use nearest for classification)
+        fallback_crs: CRS to use when the COG has no embedded CRS (e.g., from STAC proj:code)
+        fallback_transform: Affine transform [a,b,c,d,e,f] to use when the COG has an
+            identity transform (e.g., from STAC proj:transform)
 
     Returns:
         Tuple of (band_array, crs_string, transform)
     """
     with rasterio.open(href) as src:
-        crs_str = str(src.crs)
+        # Use embedded CRS/transform, falling back to STAC metadata
+        if src.crs:
+            crs_str = str(src.crs)
+            geo_transform = src.transform
+        elif fallback_crs and fallback_transform:
+            crs_str = fallback_crs
+            geo_transform = Affine(*fallback_transform)
+        else:
+            crs_str = str(src.crs)
+            geo_transform = src.transform
 
         if bbox_4326 and len(bbox_4326) == 4:
-            if src.crs and crs_str != "EPSG:4326":
-                native_bbox = _reproject_bbox(bbox_4326, src.crs)
+            if crs_str and crs_str not in ("None", "EPSG:4326"):
+                native_bbox = _reproject_bbox(bbox_4326, crs_str)
             else:
                 native_bbox = bbox_4326
 
@@ -99,8 +114,21 @@ def _read_one_band(
                 native_bbox[1],
                 native_bbox[2],
                 native_bbox[3],
-                src.transform,
+                geo_transform,
             )
+            # Clip window to the raster's valid extent so we don't
+            # read outside the dataset when the bbox is larger than the scene
+            try:
+                window = window.intersection(Window(0, 0, src.width, src.height))
+            except WindowError:
+                raise ValueError(
+                    "Requested bbox does not overlap with this scene's extent"
+                )
+
+            if window.width < 1 or window.height < 1:
+                raise ValueError(
+                    "Requested bbox does not overlap with this scene's extent"
+                )
 
             if target_shape is None:
                 data = src.read(1, window=window)
@@ -112,7 +140,7 @@ def _read_one_band(
                     resampling=resampling,
                 )
 
-            transform = src.window_transform(window)
+            transform = rasterio.windows.transform(window, geo_transform)
         else:
             if target_shape is None:
                 data = src.read(1)
@@ -123,7 +151,7 @@ def _read_one_band(
                     resampling=resampling,
                 )
 
-            transform = src.transform
+            transform = geo_transform
 
     return data, crs_str, transform
 
@@ -136,6 +164,8 @@ def read_bands_as_arrays(
     band_names: list[str],
     bbox_4326: list[float] | None = None,
     classification_bands: frozenset[str] | None = None,
+    fallback_crs: str | None = None,
+    fallback_transform: list[float] | None = None,
 ) -> ArrayReadResult:
     """
     Read bands from COG assets and return raw numpy arrays + geo metadata.
@@ -150,6 +180,8 @@ def read_bands_as_arrays(
         bbox_4326: Optional crop bbox in EPSG:4326 [west, south, east, north]
         classification_bands: Band names that should use nearest-neighbor
             resampling instead of bilinear (e.g., SCL classification band)
+        fallback_crs: CRS from STAC metadata, used when COG has no embedded CRS
+        fallback_transform: Affine transform from STAC metadata [a,b,c,d,e,f]
 
     Returns:
         ArrayReadResult with raw arrays, CRS, transform, shape, and dtype
@@ -171,7 +203,8 @@ def read_bands_as_arrays(
         )
         first_href = assets[first_name].href
         first_data, crs_str, out_transform = _read_one_band(
-            first_href, bbox_4326, None, resampling=first_resampling
+            first_href, bbox_4326, None, resampling=first_resampling,
+            fallback_crs=fallback_crs, fallback_transform=fallback_transform,
         )
         target_shape = first_data.shape
 
@@ -189,6 +222,8 @@ def read_bands_as_arrays(
                         bbox_4326,
                         target_shape,
                         Resampling.nearest if band in classification else Resampling.bilinear,
+                        fallback_crs,
+                        fallback_transform,
                     )
                     for band in remaining
                 ]
@@ -264,6 +299,8 @@ def read_bands_from_cogs(
     assets: dict[str, STACAsset],
     band_names: list[str],
     bbox_4326: list[float] | None = None,
+    fallback_crs: str | None = None,
+    fallback_transform: list[float] | None = None,
 ) -> RasterReadResult:
     """
     Read bands from COG assets and write an in-memory GeoTIFF.
@@ -282,11 +319,16 @@ def read_bands_from_cogs(
         assets: STAC item assets (band_key -> STACAsset)
         band_names: Band asset keys to read
         bbox_4326: Optional crop bbox in EPSG:4326 [west, south, east, north]
+        fallback_crs: CRS from STAC metadata, used when COG has no embedded CRS
+        fallback_transform: Affine transform from STAC metadata [a,b,c,d,e,f]
 
     Returns:
         RasterReadResult with GeoTIFF bytes, CRS, shape, and dtype
     """
-    arr_result = read_bands_as_arrays(assets, band_names, bbox_4326)
+    arr_result = read_bands_as_arrays(
+        assets, band_names, bbox_4326,
+        fallback_crs=fallback_crs, fallback_transform=fallback_transform,
+    )
     stack = np.stack(arr_result.arrays, axis=0)
     geotiff_bytes = arrays_to_geotiff(
         arr_result.arrays, arr_result.crs, arr_result.transform, arr_result.dtype
@@ -637,6 +679,8 @@ def estimate_band_size(
     assets: dict[str, STACAsset],
     band_names: list[str],
     bbox_4326: list[float] | None = None,
+    fallback_crs: str | None = None,
+    fallback_transform: list[float] | None = None,
 ) -> dict:
     """
     Estimate download size by reading COG headers only (no pixel data).
@@ -648,6 +692,8 @@ def estimate_band_size(
         assets: STAC item assets (band_key -> STACAsset)
         band_names: Band asset keys to estimate
         bbox_4326: Optional crop bbox in EPSG:4326 [west, south, east, north]
+        fallback_crs: CRS from STAC metadata, used when COG has no embedded CRS
+        fallback_transform: Affine transform from STAC metadata [a,b,c,d,e,f]
 
     Returns:
         Dict with per_band details, total_pixels, estimated_bytes, estimated_mb, crs
@@ -667,15 +713,26 @@ def estimate_band_size(
         for band_name in band_names:
             href = assets[band_name].href
             with rasterio.open(href) as src:
+                # Use embedded CRS/transform, falling back to STAC metadata
+                if src.crs:
+                    effective_crs = str(src.crs)
+                    effective_transform = src.transform
+                elif fallback_crs and fallback_transform:
+                    effective_crs = fallback_crs
+                    effective_transform = Affine(*fallback_transform)
+                else:
+                    effective_crs = str(src.crs)
+                    effective_transform = src.transform
+
                 if not crs_str:
-                    crs_str = str(src.crs)
+                    crs_str = effective_crs
 
                 dtype_str = str(src.dtypes[0])
                 dtype_bytes = np.dtype(dtype_str).itemsize
 
                 if bbox_4326 and len(bbox_4326) == 4:
-                    if src.crs and str(src.crs) != "EPSG:4326":
-                        native_bbox = _reproject_bbox(bbox_4326, src.crs)
+                    if effective_crs and effective_crs not in ("None", "EPSG:4326"):
+                        native_bbox = _reproject_bbox(bbox_4326, effective_crs)
                     else:
                         native_bbox = bbox_4326
                     window = from_bounds(
@@ -683,10 +740,18 @@ def estimate_band_size(
                         native_bbox[1],
                         native_bbox[2],
                         native_bbox[3],
-                        src.transform,
+                        effective_transform,
                     )
-                    height = int(round(window.height))
-                    width = int(round(window.width))
+                    # Clip window to the raster's valid extent
+                    try:
+                        window = window.intersection(
+                            Window(0, 0, src.width, src.height)
+                        )
+                        height = max(int(round(window.height)), 0)
+                        width = max(int(round(window.width)), 0)
+                    except WindowError:
+                        height = 0
+                        width = 0
                 else:
                     height = src.height
                     width = src.width

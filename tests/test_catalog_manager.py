@@ -95,6 +95,52 @@ class TestSceneCache:
         assert result.properties.cloud_cover == 99.0
 
 
+class TestSignPcAssets:
+    def test_noop_for_earth_search(self, catalog_manager):
+        """Non-PC catalogs should not modify asset hrefs."""
+        item = make_stac_item()
+        catalog_manager.cache_scene("s1", item, "earth_search")
+        original_href = item.assets["red"].href
+        catalog_manager._sign_pc_assets("s1", item)
+        assert item.assets["red"].href == original_href
+
+    def test_signs_azure_urls(self, catalog_manager):
+        """PC catalog should sign Azure Blob Storage URLs."""
+        item = make_stac_item()
+        for asset in item.assets.values():
+            asset.href = f"https://sentinel1euwest.blob.core.windows.net/s1-grd/{asset.href}"
+        catalog_manager.cache_scene("s1", item, "planetary_computer")
+
+        with patch("planetary_computer.sign_url", side_effect=lambda url: url + "?sig=SIGNED"):
+            catalog_manager._sign_pc_assets("s1", item)
+
+        for asset in item.assets.values():
+            assert asset.href.endswith("?sig=SIGNED")
+
+    def test_skips_non_azure_urls(self, catalog_manager):
+        """PC signing should skip non-Azure URLs (e.g., S3 hrefs)."""
+        item = make_stac_item()
+        catalog_manager.cache_scene("s1", item, "planetary_computer")
+        original_hrefs = {k: a.href for k, a in item.assets.items()}
+
+        with patch("planetary_computer.sign_url") as mock_sign:
+            catalog_manager._sign_pc_assets("s1", item)
+            mock_sign.assert_not_called()
+
+        for k, asset in item.assets.items():
+            assert asset.href == original_hrefs[k]
+
+    def test_no_crash_without_package(self, catalog_manager):
+        """Should not crash if planetary-computer is not installed."""
+        item = make_stac_item()
+        for asset in item.assets.values():
+            asset.href = f"https://sentinel1euwest.blob.core.windows.net/s1-grd/test.tif"
+        catalog_manager.cache_scene("s1", item, "planetary_computer")
+
+        with patch.dict("sys.modules", {"planetary_computer": None}):
+            catalog_manager._sign_pc_assets("s1", item)
+
+
 class TestDownloadBands:
     async def test_scene_not_found(self, catalog_manager):
         with pytest.raises(ValueError, match="not found"):

@@ -10,6 +10,7 @@ import asyncio
 import logging
 
 from ...constants import (
+    COLLECTION_CATALOGS,
     DEFAULT_CATALOG,
     DEFAULT_COLLECTION,
     DEFAULT_COMPOSITE_NAME,
@@ -20,6 +21,7 @@ from ...constants import (
     ErrorMessages,
     STACProperty,
     SuccessMessages,
+    collection_has_cloud_cover,
 )
 from ...models import (
     BandDownloadResponse,
@@ -48,6 +50,29 @@ def register_download_tools(mcp: object, manager: object) -> None:
         manager: CatalogManager instance
     """
 
+    def _aws_error_hint(scene_id: str, error: str) -> str:
+        """Append catalog-switching hint when S3 access fails."""
+        aws_keywords = ("AWS_SECRET_ACCESS_KEY", "AWS_NO_SIGN_REQUEST", "AccessDenied")
+        if not any(kw in str(error) for kw in aws_keywords):
+            return str(error)
+
+        catalog = manager.get_scene_catalog(scene_id)  # type: ignore[union-attr]
+        item = manager.get_cached_scene(scene_id)  # type: ignore[union-attr]
+        collection = item.collection if item else ""
+        alt_catalogs = [
+            c for c in COLLECTION_CATALOGS.get(collection, []) if c != catalog
+        ]
+
+        msg = f"S3 access denied for this scene (catalog: {catalog}). "
+        if alt_catalogs:
+            msg += (
+                f"Try re-searching with catalog='{alt_catalogs[0]}' — "
+                f"it provides authenticated access to {collection} data."
+            )
+        else:
+            msg += "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY for requester-pays access."
+        return msg
+
     def _response_bbox(scene_id: str, user_bbox: list[float] | None) -> list[float]:
         """Resolve the bbox to include in the response."""
         if user_bbox:
@@ -73,15 +98,31 @@ def register_download_tools(mcp: object, manager: object) -> None:
         is handled automatically.
 
         Args:
-            scene_id: Scene identifier from a previous search
-            bands: Band names to download (e.g., ["red", "green", "blue", "nir"])
-            bbox: Optional crop bbox in EPSG:4326 [west, south, east, north]
-            output_format: Output format - "geotiff" (default) or "png" (auto-stretched)
-            cloud_mask: Apply SCL-based cloud masking (Sentinel-2 only)
+            scene_id: Scene identifier from a previous stac_search call
+            bands: Band names to download. Common names:
+                - Sentinel-2: red, green, blue, nir, swir16, swir22, rededge1-3, scl
+                - Landsat: red, green, blue, nir08, swir16, swir22, coastal, qa_pixel
+                - Sentinel-1: vv, vh
+                - DEM: data
+            bbox: Optional crop bbox in EPSG:4326 [west, south, east, north].
+                Strongly recommended to avoid downloading full tiles
+            output_format: "geotiff" (default, lossless, for analysis) or
+                "png" (8-bit lossy with percentile stretch, for preview/display)
+            cloud_mask: Apply SCL-based cloud masking (Sentinel-2 only).
+                Masked pixels become 0 (integer) or NaN (float)
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
-            JSON with artifact_ref for the downloaded data
+            JSON with artifact_ref, shape, dtype, and optional preview_ref
+
+        Tips for LLMs:
+            - Use stac_describe_scene first to see available band names
+            - Always provide a bbox to limit download size
+            - Use output_format="png" when the user wants to see the image
+            - GeoTIFF preserves full radiometric precision for analysis
+            - A PNG preview is auto-generated alongside GeoTIFF downloads
+            - For RGB visualisation, prefer stac_download_rgb (simpler)
+            - For spectral indices, prefer stac_compute_index (automatic)
 
         Example:
             result = await stac_download_bands(
@@ -119,8 +160,9 @@ def register_download_tools(mcp: object, manager: object) -> None:
             return format_response(ErrorResponse(error=str(e)), output_mode)
         except Exception as e:
             logger.error(f"Band download failed: {e}")
+            error_msg = _aws_error_hint(scene_id, str(e))
             return format_response(
-                ErrorResponse(error=ErrorMessages.DOWNLOAD_FAILED.format(str(e))),
+                ErrorResponse(error=error_msg),
                 output_mode,
             )
 
@@ -136,17 +178,29 @@ def register_download_tools(mcp: object, manager: object) -> None:
         Download a true-color RGB composite from a scene.
 
         Convenience wrapper around stac_download_bands that
-        automatically selects red, green, blue bands.
+        automatically selects red, green, blue bands. This is the
+        simplest way to get a visual satellite image.
 
         Args:
-            scene_id: Scene identifier from a previous search
-            bbox: Optional crop bbox in EPSG:4326
-            output_format: Output format - "geotiff" (default) or "png" (LLMs can render inline)
+            scene_id: Scene identifier from a previous stac_search call
+            bbox: Optional crop bbox in EPSG:4326 [west, south, east, north].
+                Strongly recommended to avoid downloading full tiles
+            output_format: "geotiff" (default, lossless) or
+                "png" (8-bit lossy, suitable for inline display by LLMs)
             cloud_mask: Apply SCL-based cloud masking (Sentinel-2 only)
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
             JSON with artifact_ref for the RGB composite
+
+        Tips for LLMs:
+            - Use output_format="png" when the user wants to see the image —
+              PNG can be rendered inline
+            - GeoTIFF preserves full 16-bit precision but cannot be displayed inline
+            - For false-color composites (e.g., NIR/Red/Green), use
+              stac_download_composite instead
+            - Only works for optical collections (Sentinel-2, Landsat) that
+              have red, green, blue bands
 
         Example:
             rgb = await stac_download_rgb(scene_id="S2B_...", output_format="png")
@@ -180,8 +234,9 @@ def register_download_tools(mcp: object, manager: object) -> None:
             return format_response(ErrorResponse(error=str(e)), output_mode)
         except Exception as e:
             logger.error(f"RGB download failed: {e}")
+            error_msg = _aws_error_hint(scene_id, str(e))
             return format_response(
-                ErrorResponse(error=ErrorMessages.DOWNLOAD_FAILED.format(str(e))),
+                ErrorResponse(error=error_msg),
                 output_mode,
             )
 
@@ -198,20 +253,30 @@ def register_download_tools(mcp: object, manager: object) -> None:
         """
         Download a multi-band composite from a scene.
 
-        Creates a composite from any combination of bands (e.g., false
-        colour infrared: nir, red, green).
+        Creates a composite from any combination of bands. Band order
+        determines RGB channel mapping (first=R, second=G, third=B).
 
         Args:
-            scene_id: Scene identifier from a previous search
-            bands: Band names for the composite (e.g., ["nir", "red", "green"])
-            composite_name: Name for the composite (e.g., "false_color_ir")
-            bbox: Optional crop bbox in EPSG:4326
-            output_format: Output format - "geotiff" (default) or "png"
+            scene_id: Scene identifier from a previous stac_search call
+            bands: Band names for the composite (order = R,G,B channels).
+                Common recipes:
+                - ["nir", "red", "green"] — false colour infrared (vegetation=red)
+                - ["swir16", "nir", "red"] — agriculture (crops=bright green)
+                - ["swir16", "swir22", "red"] — geology/minerals
+            composite_name: Label for the composite (e.g., "false_color_ir")
+            bbox: Optional crop bbox in EPSG:4326 [west, south, east, north]
+            output_format: "geotiff" (default, lossless) or "png" (8-bit preview)
             cloud_mask: Apply SCL-based cloud masking (Sentinel-2 only)
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
             JSON with artifact_ref for the composite
+
+        Tips for LLMs:
+            - Use stac_describe_collection to see pre-defined composite recipes
+            - Band order matters: first band → Red, second → Green, third → Blue
+            - For true-colour RGB, use stac_download_rgb instead (simpler)
+            - For single-value analysis, use stac_compute_index (e.g., NDVI)
 
         Example:
             false_color = await stac_download_composite(
@@ -250,7 +315,7 @@ def register_download_tools(mcp: object, manager: object) -> None:
         except Exception as e:
             logger.error(f"Composite download failed: {e}")
             return format_response(
-                ErrorResponse(error=ErrorMessages.DOWNLOAD_FAILED.format(str(e))),
+                ErrorResponse(error=_aws_error_hint(scene_id, str(e))),
                 output_mode,
             )
 
@@ -267,20 +332,32 @@ def register_download_tools(mcp: object, manager: object) -> None:
         """
         Create a mosaic from multiple scenes.
 
-        Combines overlapping scenes into a single raster.
+        Combines overlapping scenes into a single seamless raster.
+        Useful when your area of interest spans multiple satellite tiles.
 
         Args:
-            scene_ids: List of scene identifiers to mosaic
-            bands: Bands to include
-            bbox: Output bounding box (union of scenes if not specified)
-            output_format: Output format - "geotiff" (default) or "png"
-            cloud_mask: Apply SCL-based cloud masking per scene before merge (Sentinel-2 only)
-            method: Merge method - "last" (default, later scenes fill gaps)
-                or "quality" (SCL-based best-pixel selection, Sentinel-2 only)
+            scene_ids: List of scene identifiers to mosaic (from stac_search)
+            bands: Bands to include (e.g., ["red", "green", "blue"])
+            bbox: Output bounding box [west, south, east, north] in EPSG:4326.
+                Defaults to union of all scenes if not specified
+            output_format: "geotiff" (default, lossless) or "png" (8-bit preview)
+            cloud_mask: Apply SCL-based cloud masking per scene before merge
+                (Sentinel-2 only)
+            method: Merge method:
+                - "last" (default): later scenes overwrite earlier in overlap areas
+                - "quality": SCL-based best-pixel selection — picks the clearest
+                  pixel from overlapping scenes (Sentinel-2 only)
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
-            JSON with artifact_ref for the mosaic
+            JSON with artifact_ref for the mosaic raster
+
+        Tips for LLMs:
+            - Use stac_coverage_check first to verify scenes cover the target area
+            - Use method="quality" for cloud-free mosaics from Sentinel-2 data
+            - Use method="last" for quick mosaics or non-optical data
+            - For temporal compositing (e.g., seasonal median), use
+              stac_temporal_composite instead
 
         Example:
             mosaic = await stac_mosaic(
@@ -355,6 +432,20 @@ def register_download_tools(mcp: object, manager: object) -> None:
         Returns:
             JSON with artifact_ref and value_range for the computed index
 
+        Tips for LLMs:
+            - Use stac_capabilities to see all available indices and required bands
+            - Interpretation guide:
+              - NDVI: >0.6 dense vegetation, 0.2-0.6 moderate, <0.2 bare/water
+              - NDWI: >0 water, <0 land; useful for flood mapping
+              - NDBI: >0 built-up, <0 natural land cover
+              - EVI: similar to NDVI but corrects for atmospheric and soil effects
+              - SAVI: like NDVI but better in areas with sparse vegetation
+              - BSI: >0 bare soil, <0 vegetated
+            - Only works for optical collections (Sentinel-2, Landsat)
+            - Enable cloud_mask=True for cleaner results with Sentinel-2 data
+            - For temporal change analysis, compute the same index on multiple
+              dates and compare value_range
+
         Example:
             ndvi = await stac_compute_index(
                 scene_id="S2B_...",
@@ -395,7 +486,7 @@ def register_download_tools(mcp: object, manager: object) -> None:
         except Exception as e:
             logger.error(f"Index computation failed: {e}")
             return format_response(
-                ErrorResponse(error=ErrorMessages.DOWNLOAD_FAILED.format(str(e))),
+                ErrorResponse(error=_aws_error_hint(scene_id, str(e))),
                 output_mode,
             )
 
@@ -430,6 +521,20 @@ def register_download_tools(mcp: object, manager: object) -> None:
         Returns:
             JSON with per-date artifact references
 
+        Tips for LLMs:
+            - Use for monitoring change over time (vegetation growth, flood extent,
+              urban expansion)
+            - Pair with stac_compute_index on each date's artifact for temporal
+              index analysis (e.g., NDVI over a growing season)
+            - Keep bbox small — each date downloads full band data
+            - Use max_cloud_cover=10 for cleaner optical time series
+            - For a single cloud-free image from a date range, use
+              stac_temporal_composite with method="median" instead
+            - max_items limits the number of dates; set higher for dense
+              temporal sampling or lower to reduce download volume
+            - Cloud cover filter is automatically skipped for non-optical
+              collections (sentinel-1-grd, cop-dem-glo-30)
+
         Example:
             ts = await stac_time_series(
                 bbox=[0.85, 51.85, 0.95, 51.92],
@@ -450,16 +555,21 @@ def register_download_tools(mcp: object, manager: object) -> None:
             coll = collection or DEFAULT_COLLECTION
             cloud_max = max_cloud_cover if max_cloud_cover is not None else MAX_CLOUD_COVER
             items_max = max_items if max_items is not None else 50
+            has_cloud = collection_has_cloud_cover(coll)
 
             def _search_time_series() -> list[object]:
                 client = manager.get_stac_client(catalog_url)  # type: ignore[union-attr]
-                search = client.search(
-                    collections=[coll],
-                    bbox=bbox,
-                    datetime=date_range,
-                    query={STACProperty.CLOUD_COVER: {"lt": cloud_max}},
-                    max_items=items_max,
-                )
+                search_kwargs: dict[str, object] = {
+                    "collections": [coll],
+                    "bbox": bbox,
+                    "datetime": date_range,
+                    "max_items": items_max,
+                }
+                if has_cloud:
+                    search_kwargs["query"] = {
+                        STACProperty.CLOUD_COVER: {"lt": cloud_max},
+                    }
+                search = client.search(**search_kwargs)
                 items = list(search.items())
                 items.sort(key=lambda x: x.properties.get(STACProperty.DATETIME, ""))
                 return items
@@ -528,6 +638,15 @@ def register_download_tools(mcp: object, manager: object) -> None:
 
         Returns:
             JSON with per-band size details and total estimate
+
+        Tips for LLMs:
+            - Call this BEFORE large downloads to check feasibility
+            - If estimated_mb > 500, suggest a smaller bbox or fewer bands
+            - No pixel data is read — only COG headers, so this is very fast
+            - Use the per-band breakdown to see which bands are largest
+              (e.g., 10m bands are ~4x larger than 20m bands)
+            - Useful for planning stac_mosaic or stac_temporal_composite
+              where multiple scenes multiply the total data volume
 
         Example:
             estimate = await stac_estimate_size(
@@ -602,6 +721,22 @@ def register_download_tools(mcp: object, manager: object) -> None:
         Returns:
             JSON with artifact_ref for the temporal composite
 
+        Tips for LLMs:
+            - Method selection:
+              - "median" (default): best for cloud-free composites — robust to
+                outliers from clouds/shadows
+              - "mean": smooth average, good for general baselines
+              - "max": captures peak values (e.g., peak NDVI in a growing season)
+              - "min": captures minimum values (e.g., lowest water extent)
+            - Enable cloud_mask=True with Sentinel-2 for best results — masks
+              clouds before compositing so they don't affect the statistics
+            - Use a 2-3 month date range for seasonal composites
+            - For per-date outputs instead of a single composite, use
+              stac_time_series
+            - Cloud cover filter is automatically skipped for non-optical
+              collections (sentinel-1-grd, cop-dem-glo-30)
+            - max_items defaults to 10 — increase for denser temporal sampling
+
         Example:
             composite = await stac_temporal_composite(
                 bbox=[0.85, 51.85, 0.95, 51.92],
@@ -622,16 +757,21 @@ def register_download_tools(mcp: object, manager: object) -> None:
             coll = collection or DEFAULT_COLLECTION
             cloud_max = max_cloud_cover if max_cloud_cover is not None else MAX_CLOUD_COVER
             items_max = max_items if max_items is not None else 10
+            has_cloud = collection_has_cloud_cover(coll)
 
             def _search() -> list[object]:
                 client = manager.get_stac_client(catalog_url)  # type: ignore[union-attr]
-                search = client.search(
-                    collections=[coll],
-                    bbox=bbox,
-                    datetime=date_range,
-                    query={STACProperty.CLOUD_COVER: {"lt": cloud_max}},
-                    max_items=items_max,
-                )
+                search_kwargs: dict[str, object] = {
+                    "collections": [coll],
+                    "bbox": bbox,
+                    "datetime": date_range,
+                    "max_items": items_max,
+                }
+                if has_cloud:
+                    search_kwargs["query"] = {
+                        STACProperty.CLOUD_COVER: {"lt": cloud_max},
+                    }
+                search = client.search(**search_kwargs)
                 return list(search.items())
 
             items = await asyncio.to_thread(_search)

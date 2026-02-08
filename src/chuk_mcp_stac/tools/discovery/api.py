@@ -49,13 +49,19 @@ def register_discovery_tools(mcp: object, manager: object) -> None:
         Get server status and configuration.
 
         Returns information about the server version, available catalogs,
-        and artifact store status.
+        and artifact store status. Use this to verify the server is running
+        and check storage configuration.
 
         Args:
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
-            JSON with server status
+            JSON with server status including version, storage provider, and default catalog
+
+        Tips for LLMs:
+            - Call stac_capabilities instead if you need to plan a workflow
+              (it returns collections, bands, and indices too)
+            - Check artifact_store_available before attempting downloads
 
         Example:
             status = await stac_status()
@@ -84,13 +90,25 @@ def register_discovery_tools(mcp: object, manager: object) -> None:
         List server capabilities: catalogs, collections, and band info.
 
         Returns a comprehensive overview of what this server can do,
-        useful for LLM planning of analysis workflows.
+        including supported catalogs, satellite collections, band names
+        per platform, and available spectral indices with required bands.
 
         Args:
             output_mode: Response format - "json" (default) or "text"
 
         Returns:
-            JSON with full capability listing
+            JSON with catalogs, collections, band mappings, and spectral indices
+
+        Tips for LLMs:
+            - Call this FIRST to understand what the server can do before
+              planning any analysis workflow
+            - Use band_mappings to know which band names to pass to download tools
+            - Use spectral_indices to see which indices are available and what
+              bands they require
+            - Typical workflow: stac_capabilities → stac_search → stac_describe_scene
+              → stac_download_bands or stac_compute_index
+            - Collections: sentinel-2-l2a (optical, 10m), landsat-c2-l2 (optical, 30m),
+              sentinel-1-grd (SAR radar, 10m), cop-dem-glo-30 (elevation, 30m)
 
         Example:
             caps = await stac_capabilities()

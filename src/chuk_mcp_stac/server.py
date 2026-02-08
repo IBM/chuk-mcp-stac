@@ -72,14 +72,21 @@ def _init_artifact_store() -> bool:
         from chuk_artifacts import ArtifactStore
         from chuk_mcp_server import set_global_artifact_store
 
+        # Use .value to ensure plain strings are passed to ArtifactStore
+        # (Python 3.11+ str(Enum) returns "EnumClass.MEMBER" not the value)
+        provider_str = provider.value if isinstance(provider, StorageProvider) else provider
+        session_str = (
+            SessionProvider.REDIS.value if redis_url else SessionProvider.MEMORY.value
+        )
+
         store_kwargs: dict[str, Any] = {
-            "storage_provider": provider,
-            "session_provider": SessionProvider.REDIS if redis_url else SessionProvider.MEMORY,
+            "storage_provider": provider_str,
+            "session_provider": session_str,
         }
 
-        if provider == StorageProvider.S3 and bucket:
+        if provider_str == StorageProvider.S3.value and bucket:
             store_kwargs["bucket"] = bucket
-        elif provider == StorageProvider.FILESYSTEM and artifacts_path:
+        elif provider_str == StorageProvider.FILESYSTEM.value and artifacts_path:
             store_kwargs["bucket"] = artifacts_path
 
         store = ArtifactStore(**store_kwargs)
