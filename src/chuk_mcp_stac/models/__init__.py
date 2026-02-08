@@ -5,6 +5,7 @@ All data structures are Pydantic models for type safety and validation.
 """
 
 from .responses import (
+    ArtifactResponse,
     BandDetail,
     BandDownloadResponse,
     BandSizeDetail,
@@ -48,6 +49,7 @@ __all__ = [
     "STACProperties",
     "STACItem",
     # Response models
+    "ArtifactResponse",
     "ErrorResponse",
     "SuccessResponse",
     "SceneInfo",

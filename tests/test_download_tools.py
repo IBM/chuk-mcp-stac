@@ -760,3 +760,56 @@ class TestOutputModeDownload:
         assert "Estimated" in result
         assert "MB" in result
         assert not result.startswith("{")
+
+
+class TestStacGetArtifact:
+    async def test_happy_path(self, download_tools, tmp_path):
+        mcp, manager = download_tools
+        fn = mcp.get_tool("stac_get_artifact")
+
+        # Mock artifact store with retrieve and metadata
+        mock_store = AsyncMock()
+        mock_store.retrieve.return_value = b"\x89PNG\r\n\x1a\nfake"
+        mock_meta = MagicMock()
+        mock_meta.mime = "image/png"
+        mock_meta.meta = {"scene_id": SAMPLE_SCENE_ID, "bands": ["red"]}
+        mock_store.metadata.return_value = mock_meta
+
+        with patch.object(manager, "_get_store", return_value=mock_store), \
+             patch("os.path.expanduser", return_value=str(tmp_path)):
+            result = await fn(artifact_ref="abc123")
+
+        data = json.loads(result)
+        assert data["artifact_ref"] == "abc123"
+        assert data["file_path"].endswith(".png")
+        assert data["mime"] == "image/png"
+        assert data["size_bytes"] > 0
+        assert "abc123" in data["file_path"]
+
+    async def test_no_store(self, download_tools):
+        mcp, manager = download_tools
+        fn = mcp.get_tool("stac_get_artifact")
+
+        with patch.object(manager, "_get_store", return_value=None):
+            result = await fn(artifact_ref="abc123")
+
+        data = json.loads(result)
+        assert "error" in data
+
+    async def test_text_mode(self, download_tools, tmp_path):
+        mcp, manager = download_tools
+        fn = mcp.get_tool("stac_get_artifact")
+
+        mock_store = AsyncMock()
+        mock_store.retrieve.return_value = b"\x00\x00fakeTIFF"
+        mock_meta = MagicMock()
+        mock_meta.mime = "image/tiff"
+        mock_meta.meta = {}
+        mock_store.metadata.return_value = mock_meta
+
+        with patch.object(manager, "_get_store", return_value=mock_store), \
+             patch("os.path.expanduser", return_value=str(tmp_path)):
+            result = await fn(artifact_ref="xyz789", output_mode="text")
+
+        assert "Saved to:" in result
+        assert "xyz789" in result

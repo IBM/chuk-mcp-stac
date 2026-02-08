@@ -24,6 +24,7 @@ from ...constants import (
     collection_has_cloud_cover,
 )
 from ...models import (
+    ArtifactResponse,
     BandDownloadResponse,
     BandSizeDetail,
     CompositeResponse,
@@ -820,3 +821,94 @@ def register_download_tools(mcp: object, manager: object) -> None:
         except Exception as e:
             logger.error(f"Temporal composite failed: {e}")
             return format_response(ErrorResponse(error=str(e)), output_mode)
+
+    @mcp.tool  # type: ignore[union-attr]
+    async def stac_get_artifact(
+        artifact_ref: str,
+        output_mode: str = "json",
+    ) -> str:
+        """
+        Retrieve a stored artifact and save it as a local file for viewing.
+
+        Downloads the artifact bytes from the artifact store and writes
+        them to a local file. Returns the file path so the image can
+        be opened in any viewer.
+
+        Args:
+            artifact_ref: Artifact ID from a previous download tool call
+                (the artifact_ref or preview_ref value)
+            output_mode: Response format - "json" (default) or "text"
+
+        Returns:
+            JSON with file_path, mime type, size, and artifact metadata
+
+        Tips for LLMs:
+            - Use the preview_ref (PNG) from download results for quick viewing
+            - Use the artifact_ref (GeoTIFF) for full-resolution geospatial data
+            - The file is saved to a temporary directory and can be opened
+              with any image viewer or GIS application
+            - PNG files can be opened with: open <file_path> (macOS)
+            - GeoTIFF files can be opened with QGIS, rasterio, or similar
+
+        Example:
+            result = await stac_get_artifact(
+                artifact_ref="a7c666e6555548aea2d5351cc65bf173"
+            )
+            # Returns: {"file_path": "/tmp/stac_artifacts/a7c666...png", ...}
+        """
+        import os
+
+        try:
+            store = manager._get_store()  # type: ignore[union-attr]
+            if not store:
+                return format_response(
+                    ErrorResponse(error="No artifact store available."),
+                    output_mode,
+                )
+
+            # Retrieve artifact data and metadata
+            data: bytes = await store.retrieve(artifact_ref)
+            meta: dict = {}
+            mime = "application/octet-stream"
+            try:
+                meta_obj = await store.metadata(artifact_ref)
+                if hasattr(meta_obj, "mime") and meta_obj.mime:
+                    mime = meta_obj.mime
+                if hasattr(meta_obj, "meta") and meta_obj.meta:
+                    meta = meta_obj.meta
+            except Exception:
+                pass
+
+            # Determine file extension from mime type
+            ext = ".bin"
+            if "png" in mime:
+                ext = ".png"
+            elif "tiff" in mime or "tif" in mime:
+                ext = ".tif"
+
+            # Save to a local directory
+            out_dir = os.path.join(os.path.expanduser("~"), ".stac_artifacts")
+            os.makedirs(out_dir, exist_ok=True)
+            file_path = os.path.join(out_dir, f"{artifact_ref}{ext}")
+
+            with open(file_path, "wb") as f:
+                f.write(data)
+
+            return format_response(
+                ArtifactResponse(
+                    artifact_ref=artifact_ref,
+                    file_path=file_path,
+                    mime=mime,
+                    size_bytes=len(data),
+                    metadata=meta,
+                    message=f"Artifact saved to {file_path}",
+                ),
+                output_mode,
+            )
+
+        except Exception as e:
+            logger.error(f"Artifact retrieval failed: {e}")
+            return format_response(
+                ErrorResponse(error=f"Could not retrieve artifact: {str(e)}"),
+                output_mode,
+            )

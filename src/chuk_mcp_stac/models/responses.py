@@ -744,3 +744,25 @@ class StatusResponse(BaseModel):
             f"Default catalog: {self.default_catalog}\n"
             f"Artifact store: {store_status}"
         )
+
+
+class ArtifactResponse(BaseModel):
+    """Response for artifact retrieval with file path and metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_ref: str = Field(..., description="Artifact identifier")
+    file_path: str = Field(..., description="Local file path where artifact was saved")
+    mime: str = Field(..., description="MIME type (image/png or image/tiff)")
+    size_bytes: int = Field(..., description="File size in bytes")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Artifact metadata")
+    message: str = Field(default="", description="Human-readable status message")
+
+    def to_text(self) -> str:
+        mb = self.size_bytes / (1024 * 1024)
+        return (
+            f"Artifact: {self.artifact_ref}\n"
+            f"Saved to: {self.file_path}\n"
+            f"Type: {self.mime} ({mb:.2f} MB)\n"
+            f"{self.message}"
+        )
