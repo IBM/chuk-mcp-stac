@@ -177,11 +177,11 @@ class BandDownloadResponse(BaseModel):
         description="Auto-generated 8-bit PNG preview with 2nd-98th percentile stretch. "
         "Created automatically when output_format is geotiff",
     )
-    bbox: list[float] = Field(..., description="Data bounding box [west, south, east, north] in EPSG:4326")
-    crs: str = Field(..., description="CRS of the downloaded data (e.g., EPSG:32631)")
-    shape: list[int] = Field(
-        ..., description="Array shape [bands, height, width] in pixels"
+    bbox: list[float] = Field(
+        ..., description="Data bounding box [west, south, east, north] in EPSG:4326"
     )
+    crs: str = Field(..., description="CRS of the downloaded data (e.g., EPSG:32631)")
+    shape: list[int] = Field(..., description="Array shape [bands, height, width] in pixels")
     dtype: str = Field(
         ...,
         description="Data type of the array. "
@@ -209,7 +209,9 @@ class CompositeResponse(BaseModel):
 
     scene_id: str = Field(..., description="Source scene identifier")
     composite_type: str = Field(..., description="Composite type (e.g., rgb, false_color_ir)")
-    bands: list[str] = Field(..., description="Bands used in composite (order determines RGB mapping)")
+    bands: list[str] = Field(
+        ..., description="Bands used in composite (order determines RGB mapping)"
+    )
     artifact_ref: str = Field(..., description="Artifact store reference for the composite raster")
     preview_ref: str | None = Field(
         None,
@@ -277,7 +279,9 @@ class IndexResponse(BaseModel):
 
     scene_id: str = Field(..., description="Source scene identifier")
     index_name: str = Field(..., description="Spectral index name (e.g., ndvi, ndwi, ndbi)")
-    required_bands: list[str] = Field(..., description="Bands used for computation (e.g., ['red', 'nir'])")
+    required_bands: list[str] = Field(
+        ..., description="Bands used for computation (e.g., ['red', 'nir'])"
+    )
     value_range: list[float] = Field(
         ...,
         description="[min, max] of computed index values (excluding NaN). "

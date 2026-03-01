@@ -75,9 +75,7 @@ def _init_artifact_store() -> bool:
         # Use .value to ensure plain strings are passed to ArtifactStore
         # (Python 3.11+ str(Enum) returns "EnumClass.MEMBER" not the value)
         provider_str = provider.value if isinstance(provider, StorageProvider) else provider
-        session_str = (
-            SessionProvider.REDIS.value if redis_url else SessionProvider.MEMORY.value
-        )
+        session_str = SessionProvider.REDIS.value if redis_url else SessionProvider.MEMORY.value
 
         store_kwargs: dict[str, Any] = {
             "storage_provider": provider_str,

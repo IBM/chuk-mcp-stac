@@ -1,6 +1,6 @@
 [project]
 name = "chuk-mcp-stac"
-version = "0.1.0"
+version = "0.2"
 description = "Satellite Imagery Discovery & Retrieval MCP Server"
 authors = []
 license = { text = "Apache-2.0" }
@@ -8,7 +8,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "mcp>=0.9.1",
-    "chuk-mcp-server>=0.15.1",
+    "chuk-mcp-server>=0.25.2",
     "chuk-artifacts",
     "python-dotenv>=1.1.1",
     "pydantic>=2.0.0",

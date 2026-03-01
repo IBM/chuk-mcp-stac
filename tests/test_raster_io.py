@@ -480,8 +480,13 @@ def _create_no_crs_geotiff(
     path = os.path.join(tmp_dir, name)
     data = np.full((height, width), fill_value, dtype="uint16")
     with rasterio.open(
-        path, "w", driver="GTiff",
-        height=height, width=width, count=1, dtype="uint16",
+        path,
+        "w",
+        driver="GTiff",
+        height=height,
+        width=width,
+        count=1,
+        dtype="uint16",
     ) as dst:
         dst.write(data, 1)
     return path
@@ -508,8 +513,11 @@ class TestFallbackCrsTransform:
         bbox = [-1.5, 52.5, -1.0, 52.8]
 
         data, crs, transform = _read_one_band(
-            path, bbox, None,
-            fallback_crs=fb_crs, fallback_transform=fb_transform,
+            path,
+            bbox,
+            None,
+            fallback_crs=fb_crs,
+            fallback_transform=fb_transform,
         )
         assert crs == "EPSG:4326"
         # Window should be smaller than full raster
@@ -530,8 +538,11 @@ class TestFallbackCrsTransform:
 
         with pytest.raises(ValueError, match="does not overlap"):
             _read_one_band(
-                path, bbox, None,
-                fallback_crs=fb_crs, fallback_transform=fb_transform,
+                path,
+                bbox,
+                None,
+                fallback_crs=fb_crs,
+                fallback_transform=fb_transform,
             )
 
     def test_read_bands_from_cogs_with_fallback(self, temp_geotiff_dir):
@@ -544,8 +555,11 @@ class TestFallbackCrsTransform:
         bbox = [-1.5, 52.5, -1.0, 52.8]
 
         result = read_bands_from_cogs(
-            assets, ["vv"], bbox,
-            fallback_crs=fb_crs, fallback_transform=fb_transform,
+            assets,
+            ["vv"],
+            bbox,
+            fallback_crs=fb_crs,
+            fallback_transform=fb_transform,
         )
         assert result.crs == "EPSG:4326"
         assert len(result.data) > 0
@@ -560,8 +574,11 @@ class TestFallbackCrsTransform:
         bbox = [-1.5, 52.5, -1.0, 52.8]
 
         result = estimate_band_size(
-            assets, ["vv"], bbox,
-            fallback_crs=fb_crs, fallback_transform=fb_transform,
+            assets,
+            ["vv"],
+            bbox,
+            fallback_crs=fb_crs,
+            fallback_transform=fb_transform,
         )
         # Should succeed and report a smaller area than full raster
         assert result["total_pixels"] > 0
@@ -574,7 +591,8 @@ class TestFallbackCrsTransform:
 
         # Pass bogus fallback — should be ignored
         result = read_bands_from_cogs(
-            assets, ["red"],
+            assets,
+            ["red"],
             fallback_crs="EPSG:4326",
             fallback_transform=[0.01, 0.0, 0.0, 0.0, -0.01, 90.0],
         )

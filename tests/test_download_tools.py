@@ -775,8 +775,10 @@ class TestStacGetArtifact:
         mock_meta.meta = {"scene_id": SAMPLE_SCENE_ID, "bands": ["red"]}
         mock_store.metadata.return_value = mock_meta
 
-        with patch.object(manager, "_get_store", return_value=mock_store), \
-             patch("os.path.expanduser", return_value=str(tmp_path)):
+        with (
+            patch.object(manager, "_get_store", return_value=mock_store),
+            patch("os.path.expanduser", return_value=str(tmp_path)),
+        ):
             result = await fn(artifact_ref="abc123")
 
         data = json.loads(result)
@@ -807,8 +809,10 @@ class TestStacGetArtifact:
         mock_meta.meta = {}
         mock_store.metadata.return_value = mock_meta
 
-        with patch.object(manager, "_get_store", return_value=mock_store), \
-             patch("os.path.expanduser", return_value=str(tmp_path)):
+        with (
+            patch.object(manager, "_get_store", return_value=mock_store),
+            patch("os.path.expanduser", return_value=str(tmp_path)),
+        ):
             result = await fn(artifact_ref="xyz789", output_mode="text")
 
         assert "Saved to:" in result

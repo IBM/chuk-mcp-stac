@@ -288,13 +288,9 @@ def register_search_tools(mcp: object, manager: object) -> None:
 
                 # Sort by cloud cover ascending (optical) or datetime (non-optical)
                 if has_cloud:
-                    items.sort(
-                        key=lambda x: x.properties.get(STACProperty.CLOUD_COVER, 100)
-                    )
+                    items.sort(key=lambda x: x.properties.get(STACProperty.CLOUD_COVER, 100))
                 else:
-                    items.sort(
-                        key=lambda x: x.properties.get(STACProperty.DATETIME, "")
-                    )
+                    items.sort(key=lambda x: x.properties.get(STACProperty.DATETIME, ""))
 
                 return items
 
@@ -326,9 +322,7 @@ def register_search_tools(mcp: object, manager: object) -> None:
             hints: list[str] = []
 
             if not has_cloud:
-                hints.append(
-                    f"Cloud cover filter skipped for '{coll}' (non-optical collection)."
-                )
+                hints.append(f"Cloud cover filter skipped for '{coll}' (non-optical collection).")
 
             if not scenes:
                 msg = ErrorMessages.NO_RESULTS

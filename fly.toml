@@ -1,4 +1,4 @@
-# fly.toml app configuration file for chuk-mcp-stac
+# fly.toml app configuration file generated for chuk-mcp-stac on 2026-03-01T01:45:41Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -9,10 +9,10 @@ primary_region = 'cdg'
 [build]
 
 [env]
+  GDAL_HTTP_TIMEOUT = '30'
   MCP_SERVER_MODE = 'http'
   PYTHONDONTWRITEBYTECODE = '1'
   PYTHONUNBUFFERED = '1'
-  GDAL_HTTP_TIMEOUT = '30'
 
 [http_service]
   internal_port = 8002
@@ -26,3 +26,4 @@ primary_region = 'cdg'
   memory = '1024mb'
   cpu_kind = 'shared'
   cpus = 1
+  memory_mb = 1024
