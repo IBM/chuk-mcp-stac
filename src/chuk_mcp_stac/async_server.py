@@ -17,6 +17,7 @@ from chuk_mcp_server import ChukMCPServer
 from .core.catalog_manager import CatalogManager
 from .tools.discovery import register_discovery_tools
 from .tools.download import register_download_tools
+from .tools.map import register_map_tools
 
 # Import tool registration modules
 from .tools.search import register_search_tools
@@ -34,6 +35,7 @@ manager = CatalogManager()
 register_search_tools(mcp, manager)
 register_download_tools(mcp, manager)
 register_discovery_tools(mcp, manager)
+register_map_tools(mcp, manager)
 
 # Run the server
 if __name__ == "__main__":

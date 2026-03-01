@@ -22,10 +22,30 @@ class MockMCPServer:
     def __init__(self) -> None:
         self._tools: dict[str, object] = {}
 
-    def tool(self, fn: object) -> object:
-        """Decorator that registers the function and returns it unchanged."""
-        self._tools[fn.__name__] = fn  # type: ignore[union-attr]
-        return fn
+    def tool(self, fn: object = None, **kwargs: object) -> object:
+        """Decorator supporting both @mcp.tool and @mcp.tool(name=...) patterns."""
+        if fn is not None and callable(fn):
+            self._tools[fn.__name__] = fn  # type: ignore[union-attr]
+            return fn
+        tool_name = kwargs.get("name")
+
+        def decorator(f: object) -> object:
+            name = tool_name or f.__name__  # type: ignore[union-attr]
+            self._tools[name] = f  # type: ignore[index]
+            return f
+
+        return decorator
+
+    def view_tool(self, **kwargs: object) -> object:
+        """Support ChukMCPServer.view_tool(**vt_kwargs)(wrapper) pattern."""
+        tool_name = kwargs.get("name")
+
+        def decorator(f: object) -> object:
+            name = tool_name or f.__name__  # type: ignore[union-attr]
+            self._tools[name] = f  # type: ignore[index]
+            return f
+
+        return decorator
 
     def get_tool(self, name: str) -> object:
         return self._tools[name]

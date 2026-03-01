@@ -23,6 +23,7 @@ from typing import Any
 from chuk_mcp_stac.core.catalog_manager import CatalogManager
 from chuk_mcp_stac.tools.discovery import register_discovery_tools
 from chuk_mcp_stac.tools.download import register_download_tools
+from chuk_mcp_stac.tools.map import register_map_tools
 from chuk_mcp_stac.tools.search import register_search_tools
 
 
@@ -32,9 +33,28 @@ class _MiniMCP:
     def __init__(self) -> None:
         self._tools: dict[str, Any] = {}
 
-    def tool(self, fn: Any) -> Any:
-        self._tools[fn.__name__] = fn
-        return fn
+    def tool(self, fn: Any = None, **kwargs: Any) -> Any:
+        """Supports both @mcp.tool and @mcp.tool(name=...) patterns."""
+        if fn is not None and callable(fn):
+            self._tools[fn.__name__] = fn
+            return fn
+        tool_name = kwargs.get("name")
+
+        def decorator(f: Any) -> Any:
+            self._tools[tool_name or f.__name__] = f
+            return f
+
+        return decorator
+
+    def view_tool(self, **kwargs: Any) -> Any:
+        """Supports ChukMCPServer.view_tool(**kwargs)(wrapper) pattern."""
+        tool_name = kwargs.get("name")
+
+        def decorator(f: Any) -> Any:
+            self._tools[tool_name or f.__name__] = f
+            return f
+
+        return decorator
 
     def get_tool(self, name: str) -> Any:
         return self._tools[name]
@@ -74,6 +94,7 @@ class ToolRunner:
         register_search_tools(self._mcp, self.manager)
         register_download_tools(self._mcp, self.manager)
         register_discovery_tools(self._mcp, self.manager)
+        register_map_tools(self._mcp, self.manager)
 
     @property
     def tool_names(self) -> list[str]:
@@ -94,3 +115,14 @@ class ToolRunner:
         """Call a tool by name and return the raw JSON string."""
         fn = self._mcp.get_tool(tool_name)
         return await fn(**kwargs)
+
+    async def run_map(self, tool_name: str, **kwargs: Any) -> dict[str, Any]:
+        """Call a map/view tool and return its structuredContent dict."""
+        fn = self._mcp.get_tool(tool_name)
+        result = await fn(**kwargs)
+        if isinstance(result, dict) and "structuredContent" in result:
+            return result["structuredContent"]
+        # Raw MapContent returned by the inner function (test path)
+        if hasattr(result, "model_dump"):
+            return result.model_dump(by_alias=True, exclude_none=True)
+        return result

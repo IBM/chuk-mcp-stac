@@ -1,15 +1,13 @@
 [project]
 name = "chuk-mcp-stac"
-version = "0.2"
+version = "0.3"
 description = "Satellite Imagery Discovery & Retrieval MCP Server"
 authors = []
 license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp>=0.9.1",
-    "chuk-mcp-server>=0.25.2",
-    "chuk-artifacts",
+    "chuk-mcp-server>=0.25.3",
     "python-dotenv>=1.1.1",
     "pydantic>=2.0.0",
     # STAC client
@@ -23,6 +21,9 @@ dependencies = [
     "tenacity>=8.2.0",
     # PNG output for RGB composites
     "Pillow>=9.0.0",
+    # Map visualisation
+    "chuk-view-schemas>=0.1.0",
+    "chuk-artifacts>=0.11.1",
 ]
 
 [project.optional-dependencies]
