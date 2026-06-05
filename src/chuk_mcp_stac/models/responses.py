@@ -778,7 +778,9 @@ class ZoneStat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     label: str = Field(..., description="Zone label")
-    center: list[float] | None = Field(default=None, description="[x, y] in zones_crs (points only)")
+    center: list[float] | None = Field(
+        default=None, description="[x, y] in zones_crs (points only)"
+    )
     n_valid: int = Field(default=0, description="Valid (non-nodata) pixels in the zone")
     mean: float | None = Field(default=None)
     std: float | None = Field(default=None)

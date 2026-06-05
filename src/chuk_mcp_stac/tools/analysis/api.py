@@ -82,7 +82,10 @@ def _run(
 
     if geojson:
         for label, geom in _geometries(geojson):
-            geom_proj = {"type": geom["type"], "coordinates": _reproject_coords(geom["coordinates"], tf)}
+            geom_proj = {
+                "type": geom["type"],
+                "coordinates": _reproject_coords(geom["coordinates"], tf),
+            }
             vals = polygon_values(arr, transform, geom_proj)
             records.append(zone_record(label, vals, np.array([]), z_threshold))
 
@@ -162,12 +165,23 @@ def register_analysis_tools(mcp: object, manager: object) -> None:
                 pass
             if "tif" not in mime.lower():
                 return format_response(
-                    ErrorResponse(error=ErrorMessages.ARTIFACT_NOT_RASTER.format(artifact_id, mime)),
+                    ErrorResponse(
+                        error=ErrorMessages.ARTIFACT_NOT_RASTER.format(artifact_id, mime)
+                    ),
                     output_mode,
                 )
 
             raster_crs, records = await asyncio.to_thread(
-                _run, data, band, points, labels, buffer_m, background_m, geojson, zones_crs, z_threshold
+                _run,
+                data,
+                band,
+                points,
+                labels,
+                buffer_m,
+                background_m,
+                geojson,
+                zones_crs,
+                z_threshold,
             )
 
             zones = [ZoneStat(**rec) for rec in records]
