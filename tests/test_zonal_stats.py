@@ -27,8 +27,13 @@ def _make_raster() -> np.ndarray:
 def _geotiff_bytes(arr: np.ndarray) -> bytes:
     with MemoryFile() as mf:
         with mf.open(
-            driver="GTiff", height=arr.shape[0], width=arr.shape[1],
-            count=1, dtype="float64", crs=CRS, transform=TRANSFORM,
+            driver="GTiff",
+            height=arr.shape[0],
+            width=arr.shape[1],
+            count=1,
+            dtype="float64",
+            crs=CRS,
+            transform=TRANSFORM,
         ) as dst:
             dst.write(arr, 1)
         return mf.read()
@@ -38,9 +43,9 @@ def test_circular_values_window_and_radius():
     arr = _make_raster()
     inner, background = circular_values(arr, TRANSFORM, CX, CY, r_inner=30.0, r_outer=150.0)
     assert inner.size > 0
-    assert np.allclose(inner, 0.6)               # all inside the disc
-    assert background.size > inner.size           # annulus is larger
-    assert background.min() == 0.2                # annulus reaches background
+    assert np.allclose(inner, 0.6)  # all inside the disc
+    assert background.size > inner.size  # annulus is larger
+    assert background.min() == 0.2  # annulus reaches background
 
 
 def test_zone_record_flags_anomaly():
@@ -65,10 +70,15 @@ def test_polygon_values():
     # A box covering the disc centre.
     geom = {
         "type": "Polygon",
-        "coordinates": [[
-            [CX - 40, CY - 40], [CX + 40, CY - 40],
-            [CX + 40, CY + 40], [CX - 40, CY + 40], [CX - 40, CY - 40],
-        ]],
+        "coordinates": [
+            [
+                [CX - 40, CY - 40],
+                [CX + 40, CY - 40],
+                [CX + 40, CY + 40],
+                [CX - 40, CY + 40],
+                [CX - 40, CY - 40],
+            ]
+        ],
     }
     vals = polygon_values(arr, TRANSFORM, geom)
     assert vals.size > 0
@@ -78,9 +88,15 @@ def test_polygon_values():
 def test_run_end_to_end_points():
     data = _geotiff_bytes(_make_raster())
     raster_crs, records = _run(
-        data, band=1, points=[[CX, CY]], labels=["disc"],
-        buffer_m=30.0, background_m=150.0, geojson=None,
-        zones_crs=CRS, z_threshold=2.0,
+        data,
+        band=1,
+        points=[[CX, CY]],
+        labels=["disc"],
+        buffer_m=30.0,
+        background_m=150.0,
+        geojson=None,
+        zones_crs=CRS,
+        z_threshold=2.0,
     )
     assert "32631" in raster_crs
     assert len(records) == 1
@@ -93,13 +109,26 @@ def test_run_nodata_ignored():
     arr[150:, :] = -9999.0  # nodata band
     with MemoryFile() as mf:
         with mf.open(
-            driver="GTiff", height=arr.shape[0], width=arr.shape[1], count=1,
-            dtype="float64", crs=CRS, transform=TRANSFORM, nodata=-9999.0,
+            driver="GTiff",
+            height=arr.shape[0],
+            width=arr.shape[1],
+            count=1,
+            dtype="float64",
+            crs=CRS,
+            transform=TRANSFORM,
+            nodata=-9999.0,
         ) as dst:
             dst.write(arr, 1)
         data = mf.read()
     _, records = _run(
-        data, band=1, points=[[CX, CY]], labels=None,
-        buffer_m=30.0, background_m=None, geojson=None, zones_crs=CRS, z_threshold=2.0,
+        data,
+        band=1,
+        points=[[CX, CY]],
+        labels=None,
+        buffer_m=30.0,
+        background_m=None,
+        geojson=None,
+        zones_crs=CRS,
+        z_threshold=2.0,
     )
     assert abs(records[0]["mean"] - 0.6) < 1e-9  # nodata far away didn't pollute the disc
