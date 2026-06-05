@@ -8,7 +8,7 @@ from typing import Any
 
 from chuk_view_schemas import LayerStyle, MapContent, MapLayer, PopupTemplate
 from chuk_view_schemas.chuk_mcp import map_tool
-from chuk_view_schemas.map import ClusterConfig, MapCenter, MapControls
+from chuk_view_schemas.map import ClusterConfig, MapBounds, MapCenter, MapControls
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,8 @@ _COLLECTION_LABELS: dict[str, str] = {
     "sentinel-1-grd": "Sentinel-1 GRD",
     "cop-dem-glo-30": "Copernicus DEM GLO-30",
 }
+
+_DEFAULT_CONTROLS = MapControls(zoom=True, layers=True, scale=True, fullscreen=True)
 
 _EMPTY_UK = MapContent(
     center=MapCenter(lat=54.0, lon=-2.0),
@@ -98,6 +100,42 @@ def _center_and_zoom(bboxes: list[list[float]]) -> tuple[float, float, int]:
     return clat, clon, zoom
 
 
+def _bounds_from_bboxes(bboxes: list[list[float]], pad: float = 0.08) -> MapBounds:
+    """Aggregate scene bboxes into padded MapBounds for fitBounds-based framing.
+
+    The map renderer fits to ``bounds`` (when present) ahead of ``center``/``zoom``,
+    so it frames the footprints to the actual viewport aspect ratio instead of
+    honouring a fixed zoom — which clips tall footprints in a short inline panel.
+    """
+    west = min(b[0] for b in bboxes)
+    south = min(b[1] for b in bboxes)
+    east = max(b[2] for b in bboxes)
+    north = max(b[3] for b in bboxes)
+    dx = (east - west) * pad or 0.01
+    dy = (north - south) * pad or 0.01
+    return MapBounds(south=south - dy, west=west - dx, north=north + dy, east=east + dx)
+
+
+def _thumbnail_layer(scene_id: str, item: Any, layer_id: str) -> MapLayer | None:
+    """Build an image-overlay MapLayer from a scene's thumbnail asset, or None."""
+    if not item.bbox or len(item.bbox) < 4:
+        return None
+    thumb = item.assets.get("thumbnail") or item.assets.get("rendered_preview")
+    if not thumb or not thumb.href:
+        return None
+    w, s, e, n = item.bbox[:4]
+    date = (item.properties.datetime or "")[:10]
+    return MapLayer(
+        id=layer_id,
+        label=date or scene_id[:20],
+        layer_type="image",  # type: ignore[arg-type]
+        visible=False,
+        opacity=0.9,
+        image_url=thumb.href,
+        image_bounds=[[s, w], [n, e]],
+    )
+
+
 # ============================================================================
 # Tool registration
 # ============================================================================
@@ -119,28 +157,29 @@ def register_map_tools(mcp: object, manager: object) -> None:
     )
     async def stac_map(
         scene_ids: str = "",
-        basemap: str = "osm",
+        basemap: str = "satellite",
     ) -> MapContent:
-        """Visualise STAC scene footprints as bbox polygons on an interactive map.
+        """Visualise STAC scene footprints and satellite thumbnails on an interactive map.
 
-        Shows scenes from stac_search as bounding-box polygon footprints grouped
-        by collection. Popup shows cloud cover, acquisition date, and thumbnail URL.
+        Shows scenes from stac_search as bounding-box polygon footprints grouped by
+        collection. Thumbnail image overlays are included (toggle on in the layer
+        control) to show actual satellite imagery at the scene's location.
 
         Args:
             scene_ids: Comma-separated scene IDs from stac_search results
-            basemap: Map background — "osm" (default), "satellite", "terrain", "dark"
+            basemap: Map background — "satellite" (default), "osm", "terrain", "dark"
 
         Returns:
-            Multi-layer scene footprint map, one layer per collection
+            Multi-layer map: footprint polygons per collection + thumbnail overlays per scene
 
         Tips for LLMs:
             - Run stac_search first, then pass all scene_id values here
-            - Each collection is a separately togglable layer
-            - Cloud cover is shown in the popup — click a footprint to see it
-            - Satellite basemap helps assess cloud cover visually
+            - Footprint layers are on by default; thumbnail layers are hidden — toggle
+              individual thumbnails on in the layer control to see actual imagery
+            - Satellite basemap provides visual context for the thumbnails
         """
         if basemap not in ("osm", "satellite", "terrain", "dark"):
-            basemap = "osm"
+            basemap = "satellite"
 
         ids = [s.strip() for s in scene_ids.split(",") if s.strip()]
         if not ids:
@@ -153,6 +192,7 @@ def register_map_tools(mcp: object, manager: object) -> None:
 
         by_collection: dict[str, list[dict[str, Any]]] = {}
         all_bboxes: list[list[float]] = []
+        items_cache: dict[str, Any] = {}
 
         for sid in ids:
             item = manager.get_cached_scene(sid)  # type: ignore[union-attr]
@@ -164,6 +204,7 @@ def register_map_tools(mcp: object, manager: object) -> None:
             col = item.collection or "unknown"
             by_collection.setdefault(col, []).append(feat)
             all_bboxes.append(list(item.bbox[:4]))
+            items_cache[sid] = item
 
         if not all_bboxes:
             return MapContent(
@@ -181,6 +222,7 @@ def register_map_tools(mcp: object, manager: object) -> None:
         cluster = ClusterConfig(enabled=False, radius=40)
         layers: list[MapLayer] = []
 
+        # Footprint polygon layers (one per collection)
         for col, feats in by_collection.items():
             layers.append(
                 MapLayer(
@@ -193,12 +235,23 @@ def register_map_tools(mcp: object, manager: object) -> None:
                 )
             )
 
+        # Thumbnail image overlay layers (one per scene, hidden by default)
+        for sid in ids:
+            item = items_cache.get(sid)
+            if item is None:
+                continue
+            safe_id = sid.replace("/", "_").replace(".", "_")[:40]
+            thumb_layer = _thumbnail_layer(sid, item, f"thumb_{safe_id}")
+            if thumb_layer:
+                layers.append(thumb_layer)
+
         return MapContent(
             center=MapCenter(lat=clat, lon=clon),
             zoom=zoom,
+            bounds=_bounds_from_bboxes(all_bboxes),
             basemap=basemap,  # type: ignore[arg-type]
             layers=layers,
-            controls=MapControls(zoom=True, layers=True, scale=True, fullscreen=True),
+            controls=_DEFAULT_CONTROLS,
         )
 
     @map_tool(  # type: ignore[arg-type]
@@ -249,9 +302,15 @@ def register_map_tools(mcp: object, manager: object) -> None:
             fields=["collection", "datetime", "cloud_cover_pct"],
         )
         layers: list[MapLayer] = []
+        before_items: dict[str, Any] = {}
+        after_items: dict[str, Any] = {}
 
         def _build_layer(
-            ids: list[str], layer_id: str, label_prefix: str, style: LayerStyle
+            ids: list[str],
+            layer_id: str,
+            label_prefix: str,
+            style: LayerStyle,
+            cache: dict[str, Any],
         ) -> MapLayer | None:
             feats = []
             for sid in ids:
@@ -263,6 +322,7 @@ def register_map_tools(mcp: object, manager: object) -> None:
                     continue
                 feats.append(feat)
                 all_bboxes.append(list(item.bbox[:4]))
+                cache[sid] = item
             if not feats:
                 return None
             return MapLayer(
@@ -274,8 +334,10 @@ def register_map_tools(mcp: object, manager: object) -> None:
                 popup=popup,
             )
 
-        before_layer = _build_layer(before_ids, "before", "Before", _PAIRS_STYLE["before"])
-        after_layer = _build_layer(after_ids, "after", "After", _PAIRS_STYLE["after"])
+        before_layer = _build_layer(
+            before_ids, "before", "Before", _PAIRS_STYLE["before"], before_items
+        )
+        after_layer = _build_layer(after_ids, "after", "After", _PAIRS_STYLE["after"], after_items)
         if before_layer:
             layers.append(before_layer)
         if after_layer:
@@ -289,11 +351,22 @@ def register_map_tools(mcp: object, manager: object) -> None:
                 layers=[],
             )
 
+        # Thumbnail image overlay layers (hidden by default)
+        for i, (sid, item) in enumerate(before_items.items()):
+            tl = _thumbnail_layer(sid, item, f"img_before_{i}")
+            if tl:
+                layers.append(tl)
+        for i, (sid, item) in enumerate(after_items.items()):
+            tl = _thumbnail_layer(sid, item, f"img_after_{i}")
+            if tl:
+                layers.append(tl)
+
         clat, clon, zoom = _center_and_zoom(all_bboxes)
         return MapContent(
             center=MapCenter(lat=clat, lon=clon),
             zoom=zoom,
+            bounds=_bounds_from_bboxes(all_bboxes),
             basemap=basemap,  # type: ignore[arg-type]
             layers=layers,
-            controls=MapControls(zoom=True, layers=True, scale=True, fullscreen=True),
+            controls=_DEFAULT_CONTROLS,
         )

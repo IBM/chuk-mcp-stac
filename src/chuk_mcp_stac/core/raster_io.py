@@ -591,7 +591,12 @@ def compute_spectral_index(
         raise ValueError(
             f"Unknown spectral index '{index_name}'. Available: {list(INDEX_FORMULAS.keys())}"
         )
-    return formula(band_arrays)
+    # Band COGs are typically uint16. Index formulas subtract/add bands
+    # (e.g. green - nir), which underflows/overflows in unsigned-integer
+    # arithmetic and yields garbage (e.g. 1 - 2 -> 65535). Promote to
+    # float32 first so the band math is signed and exact.
+    float_bands = {name: arr.astype(np.float32) for name, arr in band_arrays.items()}
+    return formula(float_bands)
 
 
 # ─── Cloud Masking ─────────────────────────────────────────────────────────────

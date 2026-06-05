@@ -53,18 +53,24 @@ def print_map(mc: dict) -> None:
     layers = mc.get("layers", [])
     print(f"  layers  : {len(layers)}")
     for layer in layers:
-        feats = layer.get("features", {}).get("features", [])
-        print(f"    [{layer['id']}]  {layer['label']}  —  {len(feats)} feature(s)")
-        for feat in feats[:2]:
-            props = feat.get("properties", {})
-            geom = feat.get("geometry", {}).get("type", "?")
-            cc = props.get("cloud_cover_pct")
-            dt = props.get("datetime", "")[:10]
-            sid = props.get("scene_id", "")[:40]
-            cc_str = f"  cloud={cc}%" if cc is not None else ""
-            print(f"      {geom}  {sid}  {dt}{cc_str}")
-        if len(feats) > 2:
-            print(f"      ... and {len(feats) - 2} more")
+        lt = layer.get("layer_type") or "geojson"
+        if lt == "image":
+            print(f"    [{layer['id']}]  {layer['label']}  [image overlay]  url={layer.get('image_url','')[:60]}")
+        elif lt == "tiles":
+            print(f"    [{layer['id']}]  {layer['label']}  [tile layer]  url={layer.get('tile_url','')[:60]}")
+        else:
+            feats = layer.get("features", {}).get("features", [])
+            print(f"    [{layer['id']}]  {layer['label']}  —  {len(feats)} feature(s)")
+            for feat in feats[:2]:
+                props = feat.get("properties", {})
+                geom = feat.get("geometry", {}).get("type", "?")
+                cc = props.get("cloud_cover_pct")
+                dt = props.get("datetime", "")[:10]
+                sid = props.get("scene_id", "")[:40]
+                cc_str = f"  cloud={cc}%" if cc is not None else ""
+                print(f"      {geom}  {sid}  {dt}{cc_str}")
+            if len(feats) > 2:
+                print(f"      ... and {len(feats) - 2} more")
 
 
 # -- Main demo ----------------------------------------------------------------
@@ -105,7 +111,7 @@ async def main() -> None:
     # ------------------------------------------------------------------ 2
     section("2. stac_map — scene footprint map")
 
-    map_result = await runner.run_map("stac_map", scene_ids=scene_ids, basemap="osm")
+    map_result = await runner.run_map("stac_map", scene_ids=scene_ids)
     print_map(map_result)
 
     out_path = OUTPUT_DIR / "stac_map.json"
@@ -156,17 +162,26 @@ async def main() -> None:
     # ------------------------------------------------------------------ 5
     section("5. Verification summary")
 
-    stac_map_layers = len(map_result.get("layers", []))
-    pairs_map_layers = len(pairs_map.get("layers", []))
+    def _count_layers(result: dict, layer_type: str | None) -> int:
+        layers = result.get("layers", [])
+        if layer_type is None:
+            return len(layers)
+        return sum(1 for la in layers if la.get("layer_type") == layer_type)
+
+    stac_map_geojson = _count_layers(map_result, None) - _count_layers(map_result, "image")
+    stac_map_image = _count_layers(map_result, "image")
+    pairs_geojson = _count_layers(pairs_map, None) - _count_layers(pairs_map, "image")
+    pairs_image = _count_layers(pairs_map, "image")
+
     all_pass = (
         map_result.get("type") == "map"
-        and stac_map_layers >= 1
+        and stac_map_geojson >= 1
         and pairs_map.get("type") == "map"
-        and pairs_map_layers == 2
+        and pairs_geojson >= 2
     )
 
-    print(f"  stac_map       type=map ✓   layers={stac_map_layers}")
-    print(f"  stac_pairs_map type=map ✓   layers={pairs_map_layers} (before + after)")
+    print(f"  stac_map       type=map ✓   geojson={stac_map_geojson}  image={stac_map_image}")
+    print(f"  stac_pairs_map type=map ✓   geojson={pairs_geojson} (before+after)  image={pairs_image}")
     print(f"\n  {'✓ All checks passed' if all_pass else '✗ Some checks failed'}")
 
 

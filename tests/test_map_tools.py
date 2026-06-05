@@ -11,6 +11,7 @@ from chuk_mcp_stac.tools.map.api import (
     _bbox_to_polygon,
     _center_and_zoom,
     _scene_to_feature,
+    _thumbnail_layer,
     _zoom_from_extent,
     register_map_tools,
 )
@@ -35,6 +36,16 @@ def _make_manager(*items: tuple[str, Any]) -> MagicMock:
 def _sc(result: dict[str, Any]) -> dict[str, Any]:
     """Extract structuredContent from a wrapper result dict."""
     return result["structuredContent"]
+
+
+def _geojson_layers(sc: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return only GeoJSON layers (excludes image/tile overlays)."""
+    return [la for la in sc["layers"] if la.get("layer_type") not in ("image", "tiles")]
+
+
+def _image_layers(sc: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return only image overlay layers."""
+    return [la for la in sc["layers"] if la.get("layer_type") == "image"]
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +126,11 @@ class TestStacMap:
         return _make_manager((SAMPLE_SCENE_ID, make_stac_item()))
 
     @pytest.fixture
+    def manager_one_with_thumb(self) -> MagicMock:
+        item = make_stac_item(extra_assets={"thumbnail": {"href": "https://example.com/thumb.jpg"}})
+        return _make_manager((SAMPLE_SCENE_ID, item))
+
+    @pytest.fixture
     def manager_two_collections(self) -> MagicMock:
         s2 = make_stac_item(scene_id=SAMPLE_SCENE_ID, collection="sentinel-2-l2a")
         ls = make_stac_item(scene_id="LC09_L2SP_20240701", collection="landsat-c2-l2")
@@ -193,13 +209,27 @@ class TestStacMap:
         assert abs(center["lon"] - expected_lon) < 0.01
 
     @pytest.mark.asyncio
-    async def test_invalid_basemap_defaults_to_osm(
+    async def test_bounds_emitted_and_enclose_footprint(
+        self, mock_mcp: MockMCPServer, manager_one: MagicMock
+    ) -> None:
+        # bounds drives the renderer's fitBounds() so footprints frame to the
+        # viewport instead of being clipped by a fixed zoom.
+        register_map_tools(mock_mcp, manager_one)
+        fn = mock_mcp.get_tool("stac_map")
+        result = await fn(scene_ids=SAMPLE_SCENE_ID)
+        bounds = _sc(result)["bounds"]
+        w, s, e, n = SAMPLE_BBOX[:4]
+        assert bounds["west"] <= w and bounds["south"] <= s
+        assert bounds["east"] >= e and bounds["north"] >= n
+
+    @pytest.mark.asyncio
+    async def test_invalid_basemap_defaults_to_satellite(
         self, mock_mcp: MockMCPServer, manager_one: MagicMock
     ) -> None:
         register_map_tools(mock_mcp, manager_one)
         fn = mock_mcp.get_tool("stac_map")
         result = await fn(scene_ids=SAMPLE_SCENE_ID, basemap="invalid")
-        assert _sc(result)["basemap"] == "osm"
+        assert _sc(result)["basemap"] == "satellite"
 
     @pytest.mark.asyncio
     async def test_satellite_basemap_accepted(
@@ -280,7 +310,7 @@ class TestStacPairsMap:
         register_map_tools(mock_mcp, manager_pairs)
         fn = mock_mcp.get_tool("stac_pairs_map")
         result = await fn(before_scene_ids=BEFORE_ID, after_scene_ids=AFTER_ID)
-        layers = _sc(result)["layers"]
+        layers = _geojson_layers(_sc(result))
         assert len(layers) == 2
         ids = {la["id"] for la in layers}
         assert "before" in ids
@@ -312,7 +342,7 @@ class TestStacPairsMap:
         register_map_tools(mock_mcp, manager_pairs)
         fn = mock_mcp.get_tool("stac_pairs_map")
         result = await fn(before_scene_ids=BEFORE_ID, after_scene_ids="")
-        layers = _sc(result)["layers"]
+        layers = _geojson_layers(_sc(result))
         assert len(layers) == 1
         assert layers[0]["id"] == "before"
 
@@ -323,7 +353,7 @@ class TestStacPairsMap:
         register_map_tools(mock_mcp, manager_pairs)
         fn = mock_mcp.get_tool("stac_pairs_map")
         result = await fn(before_scene_ids=BEFORE_ID, after_scene_ids=AFTER_ID)
-        for layer in _sc(result)["layers"]:
+        for layer in _geojson_layers(_sc(result)):
             geom_type = layer["features"]["features"][0]["geometry"]["type"]
             assert geom_type == "Polygon"
 
@@ -356,3 +386,123 @@ class TestStacPairsMap:
         fn = mock_mcp.get_tool("stac_pairs_map")
         result = await fn(before_scene_ids=BEFORE_ID, after_scene_ids=AFTER_ID)
         assert _sc(result)["type"] == "map"
+
+
+# ---------------------------------------------------------------------------
+# _thumbnail_layer helper tests
+# ---------------------------------------------------------------------------
+
+
+class TestThumbnailLayer:
+    def test_returns_none_without_thumbnail(self) -> None:
+        item = make_stac_item()  # no thumbnail asset
+        result = _thumbnail_layer(SAMPLE_SCENE_ID, item, "thumb_test")
+        assert result is None
+
+    def test_returns_image_layer_with_thumbnail(self) -> None:
+        item = make_stac_item(extra_assets={"thumbnail": {"href": "https://example.com/thumb.jpg"}})
+        layer = _thumbnail_layer(SAMPLE_SCENE_ID, item, "thumb_test")
+        assert layer is not None
+        assert layer.layer_type == "image"
+
+    def test_image_url_matches_thumbnail_href(self) -> None:
+        url = "https://example.com/sentinel/thumb.jpg"
+        item = make_stac_item(extra_assets={"thumbnail": {"href": url}})
+        layer = _thumbnail_layer(SAMPLE_SCENE_ID, item, "thumb_test")
+        assert layer is not None
+        assert layer.image_url == url
+
+    def test_image_bounds_from_bbox(self) -> None:
+        item = make_stac_item(extra_assets={"thumbnail": {"href": "https://example.com/thumb.jpg"}})
+        layer = _thumbnail_layer(SAMPLE_SCENE_ID, item, "thumb_test")
+        assert layer is not None
+        w, s, e, n = SAMPLE_BBOX
+        assert layer.image_bounds == [[s, w], [n, e]]
+
+    def test_visible_false_by_default(self) -> None:
+        item = make_stac_item(extra_assets={"thumbnail": {"href": "https://example.com/thumb.jpg"}})
+        layer = _thumbnail_layer(SAMPLE_SCENE_ID, item, "thumb_test")
+        assert layer is not None
+        assert layer.visible is False
+
+    def test_rendered_preview_fallback(self) -> None:
+        item = make_stac_item(
+            extra_assets={"rendered_preview": {"href": "https://example.com/preview.jpg"}}
+        )
+        layer = _thumbnail_layer(SAMPLE_SCENE_ID, item, "thumb_test")
+        assert layer is not None
+        assert layer.image_url == "https://example.com/preview.jpg"
+
+    def test_returns_none_without_bbox(self) -> None:
+        item = make_stac_item(extra_assets={"thumbnail": {"href": "https://example.com/thumb.jpg"}})
+        item.bbox = []
+        assert _thumbnail_layer(SAMPLE_SCENE_ID, item, "thumb_test") is None
+
+
+# ---------------------------------------------------------------------------
+# stac_map image layer integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestStacMapImageLayers:
+    @pytest.fixture
+    def mock_mcp(self) -> MockMCPServer:
+        return MockMCPServer()
+
+    @pytest.fixture
+    def manager_with_thumb(self) -> MagicMock:
+        item = make_stac_item(extra_assets={"thumbnail": {"href": "https://example.com/thumb.jpg"}})
+        return _make_manager((SAMPLE_SCENE_ID, item))
+
+    @pytest.fixture
+    def manager_no_thumb(self) -> MagicMock:
+        return _make_manager((SAMPLE_SCENE_ID, make_stac_item()))
+
+    @pytest.mark.asyncio
+    async def test_scene_with_thumb_produces_image_layer(
+        self, mock_mcp: MockMCPServer, manager_with_thumb: MagicMock
+    ) -> None:
+        register_map_tools(mock_mcp, manager_with_thumb)
+        fn = mock_mcp.get_tool("stac_map")
+        result = await fn(scene_ids=SAMPLE_SCENE_ID)
+        assert len(_image_layers(_sc(result))) == 1
+
+    @pytest.mark.asyncio
+    async def test_image_layer_has_url_and_bounds(
+        self, mock_mcp: MockMCPServer, manager_with_thumb: MagicMock
+    ) -> None:
+        register_map_tools(mock_mcp, manager_with_thumb)
+        fn = mock_mcp.get_tool("stac_map")
+        result = await fn(scene_ids=SAMPLE_SCENE_ID)
+        img = _image_layers(_sc(result))[0]
+        assert img["image_url"] == "https://example.com/thumb.jpg"
+        assert img["image_bounds"] is not None
+        assert len(img["image_bounds"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_image_layer_hidden_by_default(
+        self, mock_mcp: MockMCPServer, manager_with_thumb: MagicMock
+    ) -> None:
+        register_map_tools(mock_mcp, manager_with_thumb)
+        fn = mock_mcp.get_tool("stac_map")
+        result = await fn(scene_ids=SAMPLE_SCENE_ID)
+        img = _image_layers(_sc(result))[0]
+        assert img.get("visible") is False
+
+    @pytest.mark.asyncio
+    async def test_scene_without_thumb_produces_no_image_layer(
+        self, mock_mcp: MockMCPServer, manager_no_thumb: MagicMock
+    ) -> None:
+        register_map_tools(mock_mcp, manager_no_thumb)
+        fn = mock_mcp.get_tool("stac_map")
+        result = await fn(scene_ids=SAMPLE_SCENE_ID)
+        assert _image_layers(_sc(result)) == []
+
+    @pytest.mark.asyncio
+    async def test_default_basemap_is_satellite(
+        self, mock_mcp: MockMCPServer, manager_no_thumb: MagicMock
+    ) -> None:
+        register_map_tools(mock_mcp, manager_no_thumb)
+        fn = mock_mcp.get_tool("stac_map")
+        result = await fn(scene_ids=SAMPLE_SCENE_ID)
+        assert _sc(result)["basemap"] == "satellite"
