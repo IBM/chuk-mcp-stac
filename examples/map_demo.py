@@ -55,9 +55,13 @@ def print_map(mc: dict) -> None:
     for layer in layers:
         lt = layer.get("layer_type") or "geojson"
         if lt == "image":
-            print(f"    [{layer['id']}]  {layer['label']}  [image overlay]  url={layer.get('image_url','')[:60]}")
+            print(
+                f"    [{layer['id']}]  {layer['label']}  [image overlay]  url={layer.get('image_url', '')[:60]}"
+            )
         elif lt == "tiles":
-            print(f"    [{layer['id']}]  {layer['label']}  [tile layer]  url={layer.get('tile_url','')[:60]}")
+            print(
+                f"    [{layer['id']}]  {layer['label']}  [tile layer]  url={layer.get('tile_url', '')[:60]}"
+            )
         else:
             feats = layer.get("features", {}).get("features", [])
             print(f"    [{layer['id']}]  {layer['label']}  —  {len(feats)} feature(s)")
@@ -181,7 +185,9 @@ async def main() -> None:
     )
 
     print(f"  stac_map       type=map ✓   geojson={stac_map_geojson}  image={stac_map_image}")
-    print(f"  stac_pairs_map type=map ✓   geojson={pairs_geojson} (before+after)  image={pairs_image}")
+    print(
+        f"  stac_pairs_map type=map ✓   geojson={pairs_geojson} (before+after)  image={pairs_image}"
+    )
     print(f"\n  {'✓ All checks passed' if all_pass else '✗ Some checks failed'}")
 
 
