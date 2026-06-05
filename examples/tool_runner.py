@@ -21,6 +21,7 @@ import os
 from typing import Any
 
 from chuk_mcp_stac.core.catalog_manager import CatalogManager
+from chuk_mcp_stac.tools.analysis import register_analysis_tools
 from chuk_mcp_stac.tools.discovery import register_discovery_tools
 from chuk_mcp_stac.tools.download import register_download_tools
 from chuk_mcp_stac.tools.map import register_map_tools
@@ -95,6 +96,7 @@ class ToolRunner:
         register_download_tools(self._mcp, self.manager)
         register_discovery_tools(self._mcp, self.manager)
         register_map_tools(self._mcp, self.manager)
+        register_analysis_tools(self._mcp, self.manager)
 
     @property
     def tool_names(self) -> list[str]:

@@ -8,7 +8,7 @@
 
 ## Features
 
-This MCP server provides access to satellite imagery through STAC (SpatioTemporal Asset Catalog) APIs via twenty tools.
+This MCP server provides access to satellite imagery through STAC (SpatioTemporal Asset Catalog) APIs via twenty-one tools.
 
 **All tools return fully-typed Pydantic v2 models** for type safety, validation, and excellent IDE support. All tools support `output_mode="text"` for human-readable output alongside the default JSON.
 
@@ -139,6 +139,12 @@ Combine multiple scenes via per-pixel statistics:
 - Reduces cloud contamination in time series
 - SCL-based cloud masking per scene before compositing
 
+### 21. Zonal Statistics (`stac_zonal_stats`)
+Read a raster's values within zones — the inference step after a fetch:
+- Per-zone `n_valid / mean / std / min / max / median / p10 / p90`
+- Zones as points + `buffer_m` (circular) or GeoJSON polygons, in any CRS
+- Optional `background_m` annulus → a local z-score (anomaly readout) for cropmark / feature detection
+
 ## Installation
 
 ### Using uvx (Recommended - No Installation Required!)
@@ -245,7 +251,7 @@ Once configured, you can ask Claude questions like:
 
 ### Demo Scripts
 
-The `examples/` directory contains 19 runnable demos covering all 20 tools. Each script is self-contained and produces a PNG output in `examples/output/`.
+The `examples/` directory contains 19 runnable demos covering all 21 tools. Each script is self-contained and produces a PNG output in `examples/output/`.
 
 #### Core Tool Demos
 
@@ -490,7 +496,7 @@ Built on top of chuk-mcp-server, this server uses:
 - **Quality Mosaics**: SCL-based best-pixel selection for quality-weighted merges
 - **Progress Callbacks**: Optional progress reporting for long-running operations
 - **PC Auth**: Automatic Planetary Computer asset signing when package is installed
-- **Dual Output**: All 20 tools support `output_mode="text"` for human-readable responses
+- **Dual Output**: All 21 tools support `output_mode="text"` for human-readable responses
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for design principles and data flow diagrams.
 See [SPEC.md](SPEC.md) for the full tool specification with parameter tables.
