@@ -4,7 +4,7 @@
 # Includes GDAL/rasterio system dependencies
 
 # Build stage
-FROM python:3.11-slim as builder
+FROM python:3.14-slim as builder
 
 # Set working directory
 WORKDIR /app
@@ -31,7 +31,7 @@ COPY src ./src
 RUN uv pip install --system --no-cache -e .
 
 # Runtime stage
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 # Set working directory
 WORKDIR /app
