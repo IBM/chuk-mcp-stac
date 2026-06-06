@@ -524,7 +524,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "chuk-artifacts", specifier = ">=0.11.3" },
     { name = "chuk-mcp-server", specifier = ">=0.25.4" },
-    { name = "chuk-view-schemas", specifier = "==0.1.6" },
+    { name = "chuk-view-schemas", specifier = "==0.1.8" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
     { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.7.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
@@ -578,14 +578,14 @@ wheels = [
 
 [[package]]
 name = "chuk-view-schemas"
-version = "0.1.6"
+version = "0.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/0b/b21d5d269317b82217b017bc2a6c6e1f9e95074ef14c6e45efaf85420b15/chuk_view_schemas-0.1.6.tar.gz", hash = "sha256:be9db9650c6b18c121073fa689e0ac605bf199b687805bdccd447b7b2c4505d8", size = 32202, upload-time = "2026-03-01T15:05:59.155Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/20/e7aadf985be0ec85f22a56ac5924e9ced1f80ce31b451e5970d29bd0694a/chuk_view_schemas-0.1.8.tar.gz", hash = "sha256:a0ce43a811187799be7b7cf079e66478b688c60b7f7a7454ce67f80afb56a278", size = 32195, upload-time = "2026-03-01T23:43:07.065Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/7d/2130594d801377c251cbe0f35188c58d303a83ab14d7456ca5e2d2c69c85/chuk_view_schemas-0.1.6-py3-none-any.whl", hash = "sha256:641a1b3139334be29b3216ddfca90954d91f52ae1a262c9f3c0a84561b8784f6", size = 45390, upload-time = "2026-03-01T15:05:57.948Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/98/3b881175f7d3ff5573f9e04bc2e01a7e8f0e05a9f1c3dae5cd7548c73477/chuk_view_schemas-0.1.8-py3-none-any.whl", hash = "sha256:131fceac8f0deeb8e0cfe2a3dd050c83da298c863ca99bdd2f2db7b11a25f3f7", size = 45390, upload-time = "2026-03-01T23:43:06.09Z" },
 ]
 
 [[package]]
