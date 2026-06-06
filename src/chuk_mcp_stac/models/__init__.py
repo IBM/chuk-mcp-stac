@@ -39,6 +39,8 @@ from .responses import (
     TemporalCompositeResponse,
     TimeSeriesEntry,
     TimeSeriesResponse,
+    ZonalStatsResponse,
+    ZoneStat,
     format_response,
 )
 from .stac import STACAsset, STACItem, STACProperties
@@ -83,5 +85,7 @@ __all__ = [
     "QueryableProperty",
     "QueryablesResponse",
     "TemporalCompositeResponse",
+    "ZoneStat",
+    "ZonalStatsResponse",
     "format_response",
 ]

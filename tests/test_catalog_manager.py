@@ -106,6 +106,7 @@ class TestSignPcAssets:
 
     def test_signs_azure_urls(self, catalog_manager):
         """PC catalog should sign Azure Blob Storage URLs."""
+        pytest.importorskip("planetary_computer")
         item = make_stac_item()
         for asset in item.assets.values():
             asset.href = f"https://sentinel1euwest.blob.core.windows.net/s1-grd/{asset.href}"
@@ -119,6 +120,7 @@ class TestSignPcAssets:
 
     def test_skips_non_azure_urls(self, catalog_manager):
         """PC signing should skip non-Azure URLs (e.g., S3 hrefs)."""
+        pytest.importorskip("planetary_computer")
         item = make_stac_item()
         catalog_manager.cache_scene("s1", item, "planetary_computer")
         original_hrefs = {k: a.href for k, a in item.assets.items()}
@@ -134,7 +136,7 @@ class TestSignPcAssets:
         """Should not crash if planetary-computer is not installed."""
         item = make_stac_item()
         for asset in item.assets.values():
-            asset.href = f"https://sentinel1euwest.blob.core.windows.net/s1-grd/test.tif"
+            asset.href = "https://sentinel1euwest.blob.core.windows.net/s1-grd/test.tif"
         catalog_manager.cache_scene("s1", item, "planetary_computer")
 
         with patch.dict("sys.modules", {"planetary_computer": None}):

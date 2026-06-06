@@ -177,11 +177,11 @@ class BandDownloadResponse(BaseModel):
         description="Auto-generated 8-bit PNG preview with 2nd-98th percentile stretch. "
         "Created automatically when output_format is geotiff",
     )
-    bbox: list[float] = Field(..., description="Data bounding box [west, south, east, north] in EPSG:4326")
-    crs: str = Field(..., description="CRS of the downloaded data (e.g., EPSG:32631)")
-    shape: list[int] = Field(
-        ..., description="Array shape [bands, height, width] in pixels"
+    bbox: list[float] = Field(
+        ..., description="Data bounding box [west, south, east, north] in EPSG:4326"
     )
+    crs: str = Field(..., description="CRS of the downloaded data (e.g., EPSG:32631)")
+    shape: list[int] = Field(..., description="Array shape [bands, height, width] in pixels")
     dtype: str = Field(
         ...,
         description="Data type of the array. "
@@ -209,7 +209,9 @@ class CompositeResponse(BaseModel):
 
     scene_id: str = Field(..., description="Source scene identifier")
     composite_type: str = Field(..., description="Composite type (e.g., rgb, false_color_ir)")
-    bands: list[str] = Field(..., description="Bands used in composite (order determines RGB mapping)")
+    bands: list[str] = Field(
+        ..., description="Bands used in composite (order determines RGB mapping)"
+    )
     artifact_ref: str = Field(..., description="Artifact store reference for the composite raster")
     preview_ref: str | None = Field(
         None,
@@ -277,7 +279,9 @@ class IndexResponse(BaseModel):
 
     scene_id: str = Field(..., description="Source scene identifier")
     index_name: str = Field(..., description="Spectral index name (e.g., ndvi, ndwi, ndbi)")
-    required_bands: list[str] = Field(..., description="Bands used for computation (e.g., ['red', 'nir'])")
+    required_bands: list[str] = Field(
+        ..., description="Bands used for computation (e.g., ['red', 'nir'])"
+    )
     value_range: list[float] = Field(
         ...,
         description="[min, max] of computed index values (excluding NaN). "
@@ -766,3 +770,57 @@ class ArtifactResponse(BaseModel):
             f"Type: {self.mime} ({mb:.2f} MB)\n"
             f"{self.message}"
         )
+
+
+class ZoneStat(BaseModel):
+    """Per-zone statistics from stac_zonal_stats."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(..., description="Zone label")
+    center: list[float] | None = Field(
+        default=None, description="[x, y] in zones_crs (points only)"
+    )
+    n_valid: int = Field(default=0, description="Valid (non-nodata) pixels in the zone")
+    mean: float | None = Field(default=None)
+    std: float | None = Field(default=None)
+    min: float | None = Field(default=None)
+    max: float | None = Field(default=None)
+    median: float | None = Field(default=None)
+    p10: float | None = Field(default=None)
+    p90: float | None = Field(default=None)
+    bg_n_valid: int | None = Field(default=None, description="Background annulus pixel count")
+    bg_mean: float | None = Field(default=None)
+    bg_std: float | None = Field(default=None)
+    z_score: float | None = Field(
+        default=None, description="(mean - bg_mean) / bg_std — local anomaly score"
+    )
+    anomalous: bool | None = Field(default=None, description="|z_score| >= z_threshold")
+
+    def to_text(self) -> str:
+        if not self.n_valid or self.mean is None:
+            return f"{self.label}: no valid pixels"
+        line = (
+            f"{self.label}: mean={self.mean:.3f} "
+            f"(n={self.n_valid}, σ={self.std:.3f}, range {self.min:.3f}..{self.max:.3f})"
+        )
+        if self.z_score is not None:
+            line += f" | z={self.z_score:+.2f}{'  ANOMALOUS' if self.anomalous else ''}"
+        return line
+
+
+class ZonalStatsResponse(BaseModel):
+    """Zonal statistics for a raster artifact over a set of zones."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str = Field(..., description="Raster artifact summarised")
+    band: int = Field(..., description="Band index read (1-based)")
+    raster_crs: str = Field(..., description="CRS of the raster")
+    zones_crs: str = Field(..., description="CRS the input zones were given in")
+    zone_count: int = Field(..., description="Number of zones")
+    zones: list[ZoneStat] = Field(default_factory=list, description="Per-zone statistics")
+    message: str = Field(default="", description="Human-readable summary")
+
+    def to_text(self) -> str:
+        return "\n".join([self.message, *(z.to_text() for z in self.zones)])

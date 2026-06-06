@@ -121,14 +121,10 @@ def _read_one_band(
             try:
                 window = window.intersection(Window(0, 0, src.width, src.height))
             except WindowError:
-                raise ValueError(
-                    "Requested bbox does not overlap with this scene's extent"
-                )
+                raise ValueError("Requested bbox does not overlap with this scene's extent")
 
             if window.width < 1 or window.height < 1:
-                raise ValueError(
-                    "Requested bbox does not overlap with this scene's extent"
-                )
+                raise ValueError("Requested bbox does not overlap with this scene's extent")
 
             if target_shape is None:
                 data = src.read(1, window=window)
@@ -203,8 +199,12 @@ def read_bands_as_arrays(
         )
         first_href = assets[first_name].href
         first_data, crs_str, out_transform = _read_one_band(
-            first_href, bbox_4326, None, resampling=first_resampling,
-            fallback_crs=fallback_crs, fallback_transform=fallback_transform,
+            first_href,
+            bbox_4326,
+            None,
+            resampling=first_resampling,
+            fallback_crs=fallback_crs,
+            fallback_transform=fallback_transform,
         )
         target_shape = first_data.shape
 
@@ -326,8 +326,11 @@ def read_bands_from_cogs(
         RasterReadResult with GeoTIFF bytes, CRS, shape, and dtype
     """
     arr_result = read_bands_as_arrays(
-        assets, band_names, bbox_4326,
-        fallback_crs=fallback_crs, fallback_transform=fallback_transform,
+        assets,
+        band_names,
+        bbox_4326,
+        fallback_crs=fallback_crs,
+        fallback_transform=fallback_transform,
     )
     stack = np.stack(arr_result.arrays, axis=0)
     geotiff_bytes = arrays_to_geotiff(
@@ -588,7 +591,12 @@ def compute_spectral_index(
         raise ValueError(
             f"Unknown spectral index '{index_name}'. Available: {list(INDEX_FORMULAS.keys())}"
         )
-    return formula(band_arrays)
+    # Band COGs are typically uint16. Index formulas subtract/add bands
+    # (e.g. green - nir), which underflows/overflows in unsigned-integer
+    # arithmetic and yields garbage (e.g. 1 - 2 -> 65535). Promote to
+    # float32 first so the band math is signed and exact.
+    float_bands = {name: arr.astype(np.float32) for name, arr in band_arrays.items()}
+    return formula(float_bands)
 
 
 # ─── Cloud Masking ─────────────────────────────────────────────────────────────
@@ -744,9 +752,7 @@ def estimate_band_size(
                     )
                     # Clip window to the raster's valid extent
                     try:
-                        window = window.intersection(
-                            Window(0, 0, src.width, src.height)
-                        )
+                        window = window.intersection(Window(0, 0, src.width, src.height))
                         height = max(int(round(window.height)), 0)
                         width = max(int(round(window.width)), 0)
                     except WindowError:

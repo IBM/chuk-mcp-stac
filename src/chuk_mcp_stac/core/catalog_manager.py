@@ -174,7 +174,7 @@ class CatalogManager:
         modifier = None
         if "planetarycomputer.microsoft.com" in catalog_url:
             try:
-                import planetary_computer  # type: ignore[import-not-found]
+                import planetary_computer  # type: ignore[import-untyped]
 
                 modifier = planetary_computer.sign_inplace
                 logger.info("Planetary Computer signing enabled")
@@ -420,8 +420,12 @@ class CatalogManager:
 
             self._report_progress("reading_bands", 1, 1)
             result = await asyncio.to_thread(
-                read_bands_from_cogs, item.assets, band_names, bbox_4326,
-                fb_crs, fb_transform,
+                read_bands_from_cogs,
+                item.assets,
+                band_names,
+                bbox_4326,
+                fb_crs,
+                fb_transform,
             )
             geotiff_bytes = result.data
             crs = result.crs
@@ -875,8 +879,13 @@ class CatalogManager:
             classification_bands = frozenset({SCL_BAND_NAME})
 
         arr_result = await asyncio.to_thread(
-            read_bands_as_arrays, item.assets, read_bands, bbox_4326, classification_bands,
-            item.crs_string, item.proj_affine,
+            read_bands_as_arrays,
+            item.assets,
+            read_bands,
+            bbox_4326,
+            classification_bands,
+            item.crs_string,
+            item.proj_affine,
         )
 
         if cloud_mask:
@@ -983,8 +992,12 @@ class CatalogManager:
         from .raster_io import estimate_band_size
 
         result = await asyncio.to_thread(
-            estimate_band_size, item.assets, band_names, bbox_4326,
-            item.crs_string, item.proj_affine,
+            estimate_band_size,
+            item.assets,
+            band_names,
+            bbox_4326,
+            item.crs_string,
+            item.proj_affine,
         )
 
         # Add warnings for large downloads

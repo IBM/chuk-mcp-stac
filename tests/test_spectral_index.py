@@ -122,6 +122,37 @@ class TestComputeSpectralIndex:
         assert valid.min() >= -1.0
         assert valid.max() <= 1.0
 
+    def test_ndwi_uint16_bands_no_overflow(self):
+        """Regression: band COGs are uint16. ``green - nir`` must not underflow.
+
+        Over vegetation nir > green, so an unsigned subtraction wraps
+        (e.g. 1 - 2 -> 65535) and produced garbage NDWI pinned positive
+        (max 65535/3 = 21845, "100% water"). Bands must be promoted to
+        float before the index math.
+        """
+        bands = {
+            "green": np.array([[925, 1, 8000]], dtype=np.uint16),
+            "nir": np.array([[2858, 2, 3000]], dtype=np.uint16),
+        }
+        result = compute_spectral_index(bands, "ndwi")
+        valid = result[~np.isnan(result)]
+        assert valid.min() >= -1.0
+        assert valid.max() <= 1.0
+        # Vegetation (nir > green) must be negative, not garbage-positive.
+        assert result[0, 0] == pytest.approx((925.0 - 2858.0) / (925.0 + 2858.0))
+        assert result[0, 0] < 0
+
+    def test_uint16_matches_float_result(self):
+        """uint16 and float32 inputs must yield identical indices."""
+        rng = np.random.default_rng(7)
+        green = rng.integers(1, 12000, size=(16, 16)).astype(np.uint16)
+        nir = rng.integers(1, 12000, size=(16, 16)).astype(np.uint16)
+        as_uint = compute_spectral_index({"green": green, "nir": nir}, "ndwi")
+        as_float = compute_spectral_index(
+            {"green": green.astype(np.float32), "nir": nir.astype(np.float32)}, "ndwi"
+        )
+        np.testing.assert_array_almost_equal(as_uint, as_float)
+
 
 class TestArraysToGeotiff:
     def test_single_band_float32(self):

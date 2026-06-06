@@ -484,6 +484,17 @@ class ErrorMessages:
     CATALOG_ERROR = "Failed to connect to STAC catalog: {}"
     SCENE_NOT_FOUND = "Scene '{}' not found"
     NO_CATALOG = "No catalog specified and no default set"
+    NO_ARTIFACT_STORE = "No artifact store available."
+    ARTIFACT_NOT_FOUND = "Artifact '{}' not found in the store"
+    ARTIFACT_NOT_RASTER = (
+        "Artifact '{}' is not a readable GeoTIFF raster (got mime '{}'). Pass a GeoTIFF "
+        "artifact, e.g. from stac_compute_index / stac_download_bands with format='geotiff'."
+    )
+    NO_ZONES = "Provide zones: either points=[[x,y],...] (with buffer_m) or a geojson geometry"
+    GEOGRAPHIC_BUFFER = (
+        "Raster CRS '{}' is geographic (degrees), so a metre buffer is undefined. Use a "
+        "projected index raster (Sentinel-2 indices are UTM) or pass geojson polygon zones."
+    )
 
 
 class SuccessMessages:

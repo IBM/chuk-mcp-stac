@@ -240,9 +240,7 @@ class TestStacSearchCloudFilter:
         mock_client.search.return_value = mock_search
 
         with patch.object(manager, "get_stac_client", return_value=mock_client):
-            result = json.loads(
-                await fn(bbox=SAMPLE_BBOX, collection="sentinel-1-grd")
-            )
+            result = json.loads(await fn(bbox=SAMPLE_BBOX, collection="sentinel-1-grd"))
 
         call_kwargs = mock_client.search.call_args[1]
         assert "query" not in call_kwargs
@@ -260,9 +258,7 @@ class TestStacSearchCloudFilter:
         mock_client.search.return_value = mock_search
 
         with patch.object(manager, "get_stac_client", return_value=mock_client):
-            result = json.loads(
-                await fn(bbox=SAMPLE_BBOX, collection="cop-dem-glo-30")
-            )
+            result = json.loads(await fn(bbox=SAMPLE_BBOX, collection="cop-dem-glo-30"))
 
         call_kwargs = mock_client.search.call_args[1]
         assert "query" not in call_kwargs
@@ -299,9 +295,7 @@ class TestStacSearchCloudFilter:
         mock_client.search.return_value = mock_search
 
         with patch.object(manager, "get_stac_client", return_value=mock_client):
-            result = json.loads(
-                await fn(bbox=SAMPLE_BBOX, collection="sentinel-1-grd")
-            )
+            result = json.loads(await fn(bbox=SAMPLE_BBOX, collection="sentinel-1-grd"))
 
         assert any("cloud cover filter skipped" in h.lower() for h in result["hints"])
 
@@ -346,8 +340,10 @@ class TestStacSearchHints:
         with patch.object(manager, "get_stac_client", return_value=mock_client):
             result = json.loads(await fn(bbox=SAMPLE_BBOX, max_cloud_cover=5))
 
-        assert any("increasing max_cloud_cover" in h.lower() or "try increasing" in h.lower()
-                    for h in result["hints"])
+        assert any(
+            "increasing max_cloud_cover" in h.lower() or "try increasing" in h.lower()
+            for h in result["hints"]
+        )
 
     async def test_zero_results_suggests_alt_catalogs(self, search_tools):
         mcp, manager = search_tools

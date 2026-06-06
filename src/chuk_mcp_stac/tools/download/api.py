@@ -60,9 +60,7 @@ def register_download_tools(mcp: object, manager: object) -> None:
         catalog = manager.get_scene_catalog(scene_id)  # type: ignore[union-attr]
         item = manager.get_cached_scene(scene_id)  # type: ignore[union-attr]
         collection = item.collection if item else ""
-        alt_catalogs = [
-            c for c in COLLECTION_CATALOGS.get(collection, []) if c != catalog
-        ]
+        alt_catalogs = [c for c in COLLECTION_CATALOGS.get(collection, []) if c != catalog]
 
         msg = f"S3 access denied for this scene (catalog: {catalog}). "
         if alt_catalogs:
@@ -657,9 +655,7 @@ def register_download_tools(mcp: object, manager: object) -> None:
             )
         """
         try:
-            result = await manager.estimate_size(  # type: ignore[union-attr]
-                scene_id, bands, bbox
-            )
+            result = await manager.estimate_size(scene_id, bands, bbox)  # type: ignore[union-attr]
 
             per_band = [BandSizeDetail(**detail) for detail in result["per_band"]]
 

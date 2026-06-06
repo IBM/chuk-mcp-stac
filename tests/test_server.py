@@ -108,9 +108,38 @@ class TestMain:
             patch("chuk_mcp_stac.server.mcp", mock_mcp),
             patch("chuk_mcp_stac.server._init_artifact_store", return_value=True),
             patch("sys.argv", ["chuk-mcp-stac", "http", "--port", "9000"]),
+            patch.dict(os.environ, {}, clear=True),
         ):
             main()
-        mock_mcp.run.assert_called_once_with(host="localhost", port=9000, stdio=False)
+        # With no HOST env or --host, host falls through to None so the framework
+        # smart-detects the bind address (0.0.0.0 on cloud platforms like Fly.io).
+        mock_mcp.run.assert_called_once_with(host=None, port=9000, stdio=False)
+
+    def test_http_mode_explicit_host(self):
+        from chuk_mcp_stac.server import main
+
+        mock_mcp = MagicMock()
+        with (
+            patch("chuk_mcp_stac.server.mcp", mock_mcp),
+            patch("chuk_mcp_stac.server._init_artifact_store", return_value=True),
+            patch("sys.argv", ["chuk-mcp-stac", "http", "--host", "0.0.0.0"]),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            main()
+        mock_mcp.run.assert_called_once_with(host="0.0.0.0", port=8002, stdio=False)
+
+    def test_http_mode_host_port_from_env(self):
+        from chuk_mcp_stac.server import main
+
+        mock_mcp = MagicMock()
+        with (
+            patch("chuk_mcp_stac.server.mcp", mock_mcp),
+            patch("chuk_mcp_stac.server._init_artifact_store", return_value=True),
+            patch("sys.argv", ["chuk-mcp-stac", "http"]),
+            patch.dict(os.environ, {"HOST": "0.0.0.0", "PORT": "8002"}, clear=True),
+        ):
+            main()
+        mock_mcp.run.assert_called_once_with(host="0.0.0.0", port=8002, stdio=False)
 
     def test_auto_detect_stdio(self):
         from chuk_mcp_stac.server import main
@@ -139,4 +168,4 @@ class TestMain:
             patch.dict(os.environ, {}, clear=True),
         ):
             main()
-        mock_mcp.run.assert_called_once_with(host="localhost", port=8002, stdio=False)
+        mock_mcp.run.assert_called_once_with(host=None, port=8002, stdio=False)

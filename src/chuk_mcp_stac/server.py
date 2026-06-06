@@ -75,9 +75,7 @@ def _init_artifact_store() -> bool:
         # Use .value to ensure plain strings are passed to ArtifactStore
         # (Python 3.11+ str(Enum) returns "EnumClass.MEMBER" not the value)
         provider_str = provider.value if isinstance(provider, StorageProvider) else provider
-        session_str = (
-            SessionProvider.REDIS.value if redis_url else SessionProvider.MEMORY.value
-        )
+        session_str = SessionProvider.REDIS.value if redis_url else SessionProvider.MEMORY.value
 
         store_kwargs: dict[str, Any] = {
             "storage_provider": provider_str,
@@ -120,18 +118,32 @@ def main() -> None:
         help="Transport mode (stdio for Claude Desktop, http for API)",
     )
     parser.add_argument(
-        "--host", default="localhost", help="Host for HTTP mode (default: localhost)"
+        "--host",
+        default=os.environ.get("HOST"),
+        help=(
+            "Host for HTTP mode. Defaults to the HOST env var, otherwise the framework's "
+            "smart default (0.0.0.0 on cloud platforms like Fly.io, localhost locally)."
+        ),
     )
-    parser.add_argument("--port", type=int, default=8002, help="Port for HTTP mode (default: 8002)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PORT", "8002")),
+        help="Port for HTTP mode (defaults to the PORT env var, otherwise 8002)",
+    )
 
     args = parser.parse_args()
+
+    # When --host/HOST is unset the framework smart-detects the bind address
+    # (0.0.0.0 on cloud platforms such as Fly.io, localhost locally).
+    host_display = args.host or "auto (0.0.0.0 on cloud, localhost locally)"
 
     if args.mode == "stdio":
         print("STAC MCP Server starting in STDIO mode", file=sys.stderr)
         mcp.run(stdio=True)
     elif args.mode == "http":
         print(
-            f"STAC MCP Server starting in HTTP mode on {args.host}:{args.port}",
+            f"STAC MCP Server starting in HTTP mode on {host_display}:{args.port}",
             file=sys.stderr,
         )
         mcp.run(host=args.host, port=args.port, stdio=False)
@@ -141,7 +153,7 @@ def main() -> None:
             mcp.run(stdio=True)
         else:
             print(
-                f"STAC MCP Server starting in HTTP mode on {args.host}:{args.port}",
+                f"STAC MCP Server starting in HTTP mode on {host_display}:{args.port}",
                 file=sys.stderr,
             )
             mcp.run(host=args.host, port=args.port, stdio=False)
