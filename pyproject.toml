@@ -7,7 +7,7 @@ license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "chuk-mcp-server>=0.25.4",
+    "chuk-mcp-server>=0.25.5",
     "python-dotenv>=1.1.1",
     "pydantic>=2.0.0",
     # STAC client
@@ -46,6 +46,21 @@ dev = [
 
 [project.scripts]
 chuk-mcp-stac = "chuk_mcp_stac.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+    "bandit>=1.7.0",
+    "pre-commit>=3.0.0",
+    "matplotlib>=3.7.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -100,3 +115,12 @@ target-version = "py311"
 [tool.bandit]
 exclude_dirs = ["tests"]
 skips = ["B101"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true
+follow_imports = "silent"
+disallow_untyped_defs = false
+warn_return_any = false
+show_error_codes = true
